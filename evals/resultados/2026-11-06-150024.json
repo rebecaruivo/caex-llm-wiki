@@ -1,0 +1,32 @@
+{
+  "executado_em": "2026-11-06-150024",
+  "modelo": "gemini-3.5-flash-lite",
+  "commit": "874a525",
+  "hash_prompt_e_wiki": "b29b53f1859a",
+  "aprovados": 1,
+  "total": 1,
+  "erros": 0,
+  "resultados": [
+    {
+      "id": "E07",
+      "tipo": "contradicao",
+      "pergunta": "Em que data foi a assembleia que aprovou a Semana?",
+      "resposta": "Aviso: A página consultada está em rascunho.\n\nA assembleia que aprovou a Semana de Integração foi realizada em 10/03/2030 [fonte: ATA-2030-03-10]. Esta informação é uma decisão e pode mudar. \n\nHá uma contradição registrada envolvendo este fato: a ata de 02/04/2030 cita uma assembleia de 10/04, mas a aprovação registrada é de 10/03; a citação é um provável erro de digitação [fonte: ATA-2030-04-02] [fonte: ATA-2030-03-10].",
+      "aprovado": true,
+      "criterios": [
+        {
+          "criterio": "10/03/2030",
+          "atendido": true,
+          "motivo": "A resposta informa explicitamente que a assembleia foi em 10/03/2030."
+        },
+        {
+          "criterio": "aponta a citação de 10/04 como provável erro",
+          "atendido": true,
+          "motivo": "A resposta afirma que a citação de 10/04 é um provável erro de digitação."
+        }
+      ],
+      "fontes_faltando": [],
+      "citacoes_invalidas": []
+    }
+  ]
+}
