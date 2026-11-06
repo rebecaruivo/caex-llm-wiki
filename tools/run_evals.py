@@ -90,7 +90,9 @@ def montar_wiki():
     blocos = []
     for pagina in paginas:
         nome = pagina.relative_to(ROOT).as_posix()
-        blocos.append(f'<pagina caminho="{nome}">\n{pagina.read_text(encoding="utf-8")}\n</pagina>')
+        texto = pagina.read_text(encoding="utf-8")
+        texto = re.sub(r"^id: .*\n", "", texto, count=1, flags=re.MULTILINE)
+        blocos.append(f'<pagina caminho="{nome}">\n{texto}\n</pagina>')
     return "\n\n".join(blocos)
 
 
