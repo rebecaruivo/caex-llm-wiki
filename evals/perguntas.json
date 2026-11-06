@@ -1,6 +1,6 @@
 [
   {"id": "E01", "tipo": "atualizacao", "pergunta": "Quando será a Semana de Integração?", "criterios": ["22/04/2030", "cita a mudança de data"], "fontes_esperadas": ["ATA-2030-03-18"]},
-  {"id": "E02", "tipo": "resposta", "pergunta": "Qual é o orçamento da Semana de Integração?", "criterios": ["R$ 500,00"], "fontes_esperadas": ["ATA-2030-04-02"]},
+  {"id": "E02", "tipo": "resposta", "pergunta": "Qual é o orçamento da Semana de Integração?", "criterios": ["R$ 500,00", "não menciona a contradição sobre a data da assembleia, porque ela não afeta o orçamento"], "fontes_esperadas": ["ATA-2030-04-02"]},
   {"id": "E03", "tipo": "resposta", "pergunta": "Quantas pessoas são necessárias para criar um GT?", "criterios": ["ao menos 3"], "fontes_esperadas": ["GUIA-GT-2030"]},
   {"id": "E04", "tipo": "resposta", "pergunta": "Como crio um grupo de trabalho?", "criterios": ["integrantes", "objetivo, coordenação e prazo", "registro em ata"], "fontes_esperadas": ["GUIA-GT-2030"]},
   {"id": "E05", "tipo": "lacuna", "pergunta": "Qual é o quórum de uma assembleia?", "criterios": ["não encontrou"], "fontes_esperadas": []},
