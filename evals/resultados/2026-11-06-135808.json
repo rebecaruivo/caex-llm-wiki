@@ -1,0 +1,31 @@
+{
+  "executado_em": "2026-11-06-135808",
+  "modelo": "gemini-3.5-flash-lite",
+  "commit": "698af18",
+  "hash_prompt_e_wiki": "eeb1196f6152",
+  "aprovados": 1,
+  "total": 1,
+  "erros": 0,
+  "resultados": [
+    {
+      "id": "E01",
+      "tipo": "atualizacao",
+      "pergunta": "Quando será a Semana de Integração?",
+      "resposta": "*Aviso: Esta página está em rascunho.*\n\nA data vigente para a Semana de Integração é 22/04/2030 (informação que pode mudar) [fonte: ATA-2030-03-18]. \n\nTrata-se de uma **decisão**. \n\nHistórico e contexto informados pelas fontes:\n- A assembleia havia aprovado inicialmente a realização em 15/04/2030 [fonte: ATA-2030-03-10].\n- A reunião de 18/03/2030 reagendou o evento para 22/04/2030 [fonte: ATA-2030-03-18].",
+      "aprovado": true,
+      "criterios": [
+        {
+          "criterio": "22/04/2030",
+          "atendido": true,
+          "motivo": "A resposta informa explicitamente a data de 22/04/2030."
+        },
+        {
+          "criterio": "cita a mudança de data",
+          "atendido": true,
+          "motivo": "A resposta menciona que a data inicial era 15/04/2030 e foi reagendada para 22/04/2030."
+        }
+      ],
+      "fontes_faltando": []
+    }
+  ]
+}
