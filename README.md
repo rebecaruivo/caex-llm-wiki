@@ -7,9 +7,20 @@ Base de conhecimento para um oráculo que responde dúvidas internas com fontes 
 **Estado:** wiki, prompts, validador e avaliação automática prontos. API, chat e automação ainda serão construídos.
 
 ## Resultado atual
-Com `gemini-3.5-flash-lite`, a versão atual passou em 33 de 36 respostas, ou 92%, em 3 rodadas dos 12 testes. A principal falha foi omitir uma contradição relacionada em 2 de 3 rodadas.
+Com `gemini-3.5-flash-lite`, a versão atual passou em 35 de 36 respostas, ou 97%, em 3 rodadas dos 12 testes.
+
+| Versão | Mudança | Resultado em 3 rodadas |
+|---|---|---|
+| A | Exemplos de citação no prompt | 33 de 36 |
+| B | Contradições sempre visíveis | 35 de 36 |
+| C | Contradições só quando afetam a resposta | 33 de 36 |
+| D | Remoção do `id` da página do contexto | 35 de 36 |
+
+A versão C também passou a medir menções desnecessárias à contradição. Por isso, os resultados não são totalmente comparáveis entre todas as versões.
 
 A avaliação combina checagem de citações por código e critérios avaliados por um modelo de linguagem. Ela verifica se cada citação existe, mas ainda não confirma se a fonte comprova a frase.
+
+**Principal aprendizado:** depois de vários ajustes de prompt, a solução mais eficaz foi tirar do contexto o campo que confundia o modelo.
 
 ## O problema
 Decisões, processos e contatos costumam ficar espalhados em atas, documentos e na memória de quem já passou pela gestão.
