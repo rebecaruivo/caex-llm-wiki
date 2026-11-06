@@ -20,6 +20,7 @@ A data vigente é 22/04/2030. A data aprovada antes, 15/04/2030, foi substituíd
 - A reunião de 18/03/2030 reagendou para 22/04/2030. [fonte: ATA-2030-03-18]
 - O orçamento aprovado é de R$ 500,00. [fonte: ATA-2030-04-02]
 - A organização está com a área de eventos. [fonte: ATA-2030-03-10]
+- A ata de 02/04/2030 cita uma assembleia de 10/04, mas a aprovação registrada é de 10/03; a citação é um provável erro de digitação. [fonte: ATA-2030-04-02] [fonte: ATA-2030-03-10]
 
 ## O que ainda não sabemos
 - Horário e local.
