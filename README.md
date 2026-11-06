@@ -4,7 +4,12 @@
 
 Base de conhecimento para um oráculo que responde dúvidas internas com fontes e admite quando não sabe.
 
-**Estado:** wiki de demonstração, prompts, validador e testes prontos. API, chat e automação ainda serão construídos. Nenhuma taxa de acerto foi medida.
+**Estado:** wiki, prompts, validador e avaliação automática prontos. API, chat e automação ainda serão construídos.
+
+## Resultado atual
+Com `gemini-3.5-flash-lite`, a versão atual passou em 33 de 36 respostas, ou 92%, em 3 rodadas dos 12 testes. A principal falha foi omitir uma contradição relacionada em 2 de 3 rodadas.
+
+A avaliação combina checagem de citações por código e critérios avaliados por um modelo de linguagem. Ela verifica se cada citação existe, mas ainda não confirma se a fonte comprova a frase.
 
 ## O problema
 Decisões, processos e contatos costumam ficar espalhados em atas, documentos e na memória de quem já passou pela gestão.
