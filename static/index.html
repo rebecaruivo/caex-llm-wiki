@@ -208,6 +208,8 @@
     .or-answer.ativa { border-color: var(--line-strong); }
     .or-answer__q { margin: 0 0 var(--space-4); font: 500 13px/20px var(--font-sans); color: var(--ink-muted); }
     .or-answer__q b { font-weight: 500; color: var(--ink); }
+    .interpretada { margin: calc(-1 * var(--space-3)) 0 var(--space-4); font-size: 13px; line-height: 20px; color: var(--ink-muted); }
+    .interpretada b { font-weight: 500; color: var(--ink); }
     .or-answer__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
     .or-answer__head:empty { display: none; }
     .or-answer__body { max-width: var(--measure-reading); font: 400 18px/29px var(--font-serif); color: var(--ink); }
@@ -771,6 +773,7 @@
 
       const artigo = el("article", { class: indice === ativa ? "or-answer ativa" : "or-answer", "aria-label": `Pergunta: ${m.pergunta}` }, [
         el("p", { class: "or-answer__q" }, ["Pergunta · ", el("b", { text: m.pergunta })]),
+        interpretacao(m),
         cabeca, corpo
       ]);
 
@@ -797,6 +800,13 @@
       artigo.appendChild(el("div", { class: "or-answer__foot" }, [el("span", { text: partes.filter(Boolean).join(" · ") }), acoes]));
       artigo.appendChild(retorno);
       return artigo;
+    }
+
+    // Mostra como o oráculo entendeu uma pergunta de continuação ("E quem organiza?").
+    function interpretacao(m) {
+      const base = (s) => String(s || "").toLowerCase().replace(/[?.!\s]+$/, "").trim();
+      if (!m.pergunta_interpretada || base(m.pergunta_interpretada) === base(m.pergunta)) return null;
+      return el("p", { class: "interpretada" }, ["Entendi como · ", el("b", { text: m.pergunta_interpretada })]);
     }
 
     function avisoLacuna(m, a) {
@@ -953,7 +963,8 @@
         if (!wiki) await buscarWiki();
         const dados = r.corpo;
         const mensagem = {
-          pergunta, resposta: dados.resposta, fontes: dados.fontes || [],
+          pergunta, pergunta_interpretada: dados.pergunta_interpretada || null,
+          resposta: dados.resposta, fontes: dados.fontes || [],
           citacoes_invalidas: dados.citacoes_invalidas || [], criado_em: new Date().toISOString(), naoSalvo: !dados.salvo
         };
         if (!chatAtual) chatAtual = { id: dados.chat_id, titulo: pergunta, mensagens: [] };

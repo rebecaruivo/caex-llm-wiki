@@ -5,15 +5,15 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import db
-from oraculo import MODELO_PADRAO, ErroApi, carregar_env, responder, resumo_wiki
+from oraculo import MODELO_PADRAO, ErroApi, carregar_env, reescrever, responder, resumo_wiki
 
 carregar_env()
 
@@ -31,8 +31,18 @@ class Pergunta(BaseModel):
     pergunta: str = Field(min_length=3, max_length=500, examples=["Quando será a Semana de Integração?"])
     chat_id: UUID | None = Field(default=None, description="Vazio cria um chat novo.")
 
-    # Exemplo da página /docs: sem chat_id, para a primeira pergunta criar um chat.
-    model_config = {"json_schema_extra": {"examples": [{"pergunta": "Quando será a Semana de Integração?"}]}}
+
+# Exemplos que aparecem na página /docs, num menu para escolher.
+EXEMPLOS_PERGUNTA = {
+    "nova": {
+        "summary": "Nova conversa (sem chat_id)",
+        "value": {"pergunta": "Quando será a Semana de Integração?"},
+    },
+    "continuar": {
+        "summary": "Continuar um chat (cole o chat_id)",
+        "value": {"pergunta": "E quem organiza?", "chat_id": "cole-aqui-o-chat_id"},
+    },
+}
 
 
 class Registro(BaseModel):
@@ -47,6 +57,7 @@ class Resposta(BaseModel):
     citacoes_invalidas: list[str]
     chat_id: str | None = None
     salvo: bool = False
+    pergunta_interpretada: str | None = None
 
 
 NAO_ENCONTRADO = "Este chat não existe mais. Alguém do CA pode ter apagado."
@@ -80,7 +91,7 @@ def wiki():
 
 
 @app.post("/api/perguntar", response_model=Resposta)
-def perguntar(dados: Pergunta):
+def perguntar(dados: Annotated[Pergunta, Body(openapi_examples=EXEMPLOS_PERGUNTA)]):
     """Recebe uma pergunta e devolve a resposta do oráculo com as fontes citadas."""
     pergunta = dados.pergunta.strip()
     if len(pergunta) < 3:
@@ -91,18 +102,30 @@ def perguntar(dados: Pergunta):
         raise HTTPException(status_code=503, detail="Oráculo indisponível: a chave do modelo não está configurada.")
 
     chat_id = str(dados.chat_id) if dados.chat_id else None
+    anteriores = []
     if chat_id and db.configurado():
-        # Confere antes de gastar uma chamada ao modelo.
+        # Confere antes de gastar uma chamada ao modelo e pega as perguntas anteriores.
         try:
-            db.abrir_chat(chat_id)
+            chat = db.abrir_chat(chat_id)
+            anteriores = [m.get("pergunta_interpretada") or m["pergunta"] for m in chat.get("mensagens", [])]
         except db.ChatNaoEncontrado as erro:
             raise HTTPException(status_code=404, detail=NAO_ENCONTRADO) from erro
         except db.ErroBanco as erro:
             print(f"Falha ao abrir chat: {erro}", flush=True)
 
     modelo = os.environ.get("GEMINI_MODEL", MODELO_PADRAO)
+
+    # Passo 1: completa perguntas que dependem das anteriores. Se falhar, segue com a original.
+    interpretada = pergunta
+    if anteriores:
+        try:
+            interpretada = reescrever(pergunta, anteriores, chave, modelo, tentativas=2)
+        except ErroApi as erro:
+            print(f"Falha ao reescrever a pergunta: {erro}", flush=True)
+
+    # Passo 2: o oráculo de sempre, avaliado pelos evals, responde a pergunta completa.
     try:
-        resultado = responder(pergunta, chave, modelo, tentativas=2)
+        resultado = responder(interpretada, chave, modelo, tentativas=2)
     except ErroApi as erro:
         print(f"Falha ao consultar o modelo: {erro}", flush=True)
         raise HTTPException(status_code=502, detail="Não foi possível consultar o modelo agora. Tente novamente.") from erro
@@ -113,11 +136,12 @@ def perguntar(dados: Pergunta):
         try:
             if not chat_id:
                 chat_id = db.criar_chat(pergunta)["id"]
-            db.salvar_mensagem(chat_id, pergunta, resultado)
+            db.salvar_mensagem(chat_id, pergunta, resultado, interpretada if interpretada != pergunta else None)
             resultado["salvo"] = True
         except db.ErroBanco as erro:
             print(f"Falha ao salvar no histórico: {erro}", flush=True)
     resultado["chat_id"] = chat_id
+    resultado["pergunta_interpretada"] = interpretada if interpretada != pergunta else None
     return resultado
 
 

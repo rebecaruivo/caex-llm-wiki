@@ -167,3 +167,45 @@ def resumo_wiki():
         "ainda_nao_cobre": faltando,
         "fontes": fontes,
     }
+
+
+# ===== Reescrita de perguntas de continuação =====
+# Passo 1 de 2: transforma "E quem organiza?" em "Quem organiza a Semana de Integração?".
+# O passo 2 é o responder() acima, sem mudança. Assim os evals do oráculo continuam valendo.
+
+HISTORICO_MAXIMO = 3
+
+
+def carregar_prompt_reescrita():
+    return (ROOT / "prompts/reescrita.md").read_text(encoding="utf-8")
+
+
+def montar_prompt_reescrita(pergunta, anteriores, modelo_prompt):
+    valores = {
+        "historico": "\n".join(f"- {h}" for h in anteriores),
+        "pergunta": pergunta,
+    }
+    # Uma só passada: um texto do usuário com "{{pergunta}}" não é substituído de novo.
+    return re.sub(r"\{\{(historico|pergunta)\}\}", lambda m: valores[m.group(1)], modelo_prompt)
+
+
+def validar_reescrita(texto, original):
+    """Usa a pergunta original quando a reescrita sai do formato esperado."""
+    linha = texto.strip().strip('"“”').strip()
+    if not linha or "\n" in linha or len(linha) > 500 or "[fonte:" in linha:
+        return original
+    return linha
+
+
+def reescrever(pergunta, historico, chave, modelo, modelo_prompt=None, tentativas=5):
+    """Devolve a pergunta completa, usando as perguntas anteriores do chat.
+
+    historico: perguntas anteriores, da mais antiga para a mais recente.
+    Sem histórico, devolve a pergunta como veio, sem chamar o modelo.
+    """
+    anteriores = [h.strip() for h in historico if h and h.strip()][-HISTORICO_MAXIMO:]
+    if not anteriores:
+        return pergunta
+    modelo_prompt = modelo_prompt if modelo_prompt is not None else carregar_prompt_reescrita()
+    texto = chamar_gemini(montar_prompt_reescrita(pergunta, anteriores, modelo_prompt), modelo, chave, tentativas)
+    return validar_reescrita(texto, pergunta)

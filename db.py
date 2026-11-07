@@ -32,7 +32,7 @@ def _id(chat_id):
 
 def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False):
     """Faz uma chamada à API REST do Supabase e devolve o JSON da resposta."""
-    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    base = os.environ.get("SUPABASE_URL", "").rstrip("/").removesuffix("/rest/v1")
     chave = os.environ.get("SUPABASE_SECRET_KEY", "")
     if not base or not chave:
         raise ErroBanco("SUPABASE_URL ou SUPABASE_SECRET_KEY não configurada.")
@@ -93,7 +93,7 @@ def abrir_chat(chat_id):
     """Devolve um chat com todas as mensagens, em ordem."""
     linhas = _pedir("GET", "chats", {
         "id": f"eq.{_id(chat_id)}",
-        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,resposta,fontes,citacoes_invalidas,criado_em)",
+        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,pergunta_interpretada,resposta,fontes,citacoes_invalidas,criado_em)",
         "mensagens.order": "criado_em.asc",
     })
     if not linhas:
@@ -101,11 +101,16 @@ def abrir_chat(chat_id):
     return linhas[0]
 
 
-def salvar_mensagem(chat_id, pergunta, resultado):
-    """Guarda uma pergunta e a resposta do oráculo dentro de um chat."""
+def salvar_mensagem(chat_id, pergunta, resultado, pergunta_interpretada=None):
+    """Guarda uma pergunta e a resposta do oráculo dentro de um chat.
+
+    pergunta_interpretada: a versão completa que o oráculo respondeu, quando
+    a pergunta digitada dependia das anteriores ("E quem organiza?").
+    """
     return _pedir("POST", "mensagens", corpo={
         "chat_id": _id(chat_id),
         "pergunta": pergunta,
+        "pergunta_interpretada": pergunta_interpretada,
         "resposta": resultado["resposta"],
         "fontes": resultado["fontes"],
         "citacoes_invalidas": resultado["citacoes_invalidas"],

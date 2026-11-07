@@ -35,3 +35,6 @@ for each row execute function tocar_chat();
 -- Sem políticas: só a chave secreta, usada pela API, acessa as tabelas
 alter table chats enable row level security;
 alter table mensagens enable row level security;
+
+-- Versão completa da pergunta, quando ela dependia das anteriores (passo de reescrita)
+alter table mensagens add column pergunta_interpretada text check (char_length(pergunta_interpretada) <= 500);
