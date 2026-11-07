@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oráculo da wiki · CAEX</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <style>
+    /* ===== Tokens ===== */
+    :root {
+      --fundo: #F3F0E8;
+      --superficie: #FBFAF6;
+      --texto: #1C1B18;
+      --texto-secundario: #5F5B52;
+      --regra: #D8D2C4;
+      --destaque: #1F4D3A;
+      --destaque-suave: #E2EAE3;
+      --rascunho: #835600;
+      --rascunho-suave: #F2E5C6;
+      --sobre-destaque: #FFFFFF;
+
+      --serifa: "Newsreader", Georgia, serif;
+      --sans: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+
+      --raio: 4px;
+      --raio-campo: 6px;
+    }
+
+    /* ===== Base ===== */
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--fundo);
+      color: var(--texto);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.5;
+      font-variant-emoji: text;
+    }
+
+    ::selection { background: var(--destaque-suave); }
+
+    a { color: var(--destaque); text-underline-offset: 3px; }
+
+    :focus { outline: none; }
+    :focus-visible { outline: 2px solid var(--destaque); outline-offset: 3px; }
+    [tabindex="-1"]:focus-visible { outline: none; }
+
+    .oculto {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    h1, h2, p, ul, ol { margin: 0; }
+
+    .mono { font-family: var(--mono); }
+
+    /* ===== Faixa e cabeçalho ===== */
+    .faixa {
+      padding: 8px 20px;
+      background: var(--rascunho-suave);
+      color: var(--rascunho);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .moldura {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 32px 64px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 24px;
+      padding: 18px 0 16px;
+      margin-bottom: clamp(24px, 4vh, 40px);
+      border-bottom: 1px solid var(--regra);
+    }
+
+    .marca { display: flex; align-items: baseline; gap: 12px; }
+
+    .marca-nome {
+      font-family: var(--serifa);
+      font-size: 26px;
+      font-weight: 600;
+      line-height: 1;
+    }
+
+    .marca-sub { color: var(--texto-secundario); font-size: 14px; }
+
+    .cabecalho-meta { display: flex; align-items: baseline; gap: 20px; font-size: 14px; }
+
+    .data-wiki { font-family: var(--mono); font-size: 12px; color: var(--texto-secundario); }
+
+    /* ===== Grade ===== */
+    .corpo {
+      display: grid;
+      grid-template-columns: minmax(0, 680px) 300px;
+      justify-content: space-between;
+      column-gap: 60px;
+      row-gap: 40px;
+      align-items: start;
+    }
+
+    .principal { min-width: 0; }
+
+    /* ===== Títulos e textos ===== */
+    .titulo-inicio {
+      font-family: var(--serifa);
+      font-weight: 500;
+      font-size: clamp(36px, 3.2vw, 48px);
+      line-height: 1.1;
+      letter-spacing: -0.015em;
+    }
+
+    .intro {
+      max-width: 600px;
+      margin-top: 12px;
+      color: var(--texto-secundario);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .rotulo {
+      color: var(--texto-secundario);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .secao-titulo { font-size: 14px; font-weight: 600; }
+
+    .pergunta-titulo {
+      margin-top: 4px;
+      font-family: var(--serifa);
+      font-size: clamp(22px, 2.2vw, 26px);
+      font-weight: 400;
+      line-height: 1.3;
+    }
+
+    .titulo-resultado {
+      margin-top: 24px;
+      font-family: var(--serifa);
+      font-size: clamp(24px, 2.4vw, 28px);
+      font-weight: 500;
+      line-height: 1.3;
+    }
+
+    /* ===== Campo de pergunta ===== */
+    .form-pergunta { margin-top: 24px; }
+
+    .form-seguinte { margin-top: 40px; }
+
+    .form-seguinte .rotulo-visivel {
+      display: block;
+      margin-bottom: 8px;
+      font-family: var(--serifa);
+      font-size: 22px;
+      font-weight: 400;
+    }
+
+    .campo {
+      background: var(--superficie);
+      border: 1px solid var(--regra);
+      border-radius: var(--raio-campo);
+      padding: 12px 12px 10px 14px;
+    }
+
+    .campo:focus-within {
+      border-color: var(--destaque);
+      outline: 2px solid var(--destaque);
+      outline-offset: 2px;
+    }
+
+    textarea {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      resize: none;
+      overflow-y: hidden;
+      background: transparent;
+      color: var(--texto);
+      font: inherit;
+      font-size: 16px;
+      line-height: 24px;
+    }
+
+    textarea:focus, textarea:focus-visible { outline: none; }
+    textarea::placeholder { color: var(--texto-secundario); opacity: 1; }
+
+    .campo-rodape {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .contador { font-family: var(--mono); font-size: 12px; color: var(--texto-secundario); }
+    .contador.perto { color: var(--rascunho); }
+
+    .dica { margin-left: auto; color: var(--texto-secundario); font-size: 12px; }
+
+    .mensagem-campo { min-height: 20px; margin-top: 6px; font-size: 14px; }
+    .mensagem-campo.limite { color: var(--rascunho); }
+
+    /* ===== Botões ===== */
+    button { font: inherit; cursor: pointer; }
+
+    .botao-primario, .botao-secundario {
+      min-height: 40px;
+      padding: 8px 16px;
+      border-radius: var(--raio);
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .botao-primario {
+      border: 1px solid var(--destaque);
+      background: var(--destaque);
+      color: var(--sobre-destaque);
+    }
+
+    .botao-secundario {
+      border: 1px solid var(--texto-secundario);
+      background: transparent;
+      color: var(--texto);
+    }
+
+    .botao-secundario:hover:not(:disabled) { border-color: var(--destaque); color: var(--destaque); }
+
+    .botao-primario:disabled, .botao-secundario:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .botao-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--destaque);
+      font-size: 15px;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .botao-link:disabled { color: var(--texto-secundario); text-decoration: none; cursor: default; }
+
+    /* ===== Perguntas de exemplo ===== */
+    .exemplos { margin-top: clamp(24px, 4vh, 40px); }
+
+    .lista-exemplos { list-style: none; padding: 0; margin-top: 6px; }
+
+    .exemplo {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      width: 100%;
+      min-height: 48px;
+      padding: 12px 10px;
+      border: 0;
+      border-bottom: 1px solid var(--regra);
+      border-radius: 0;
+      background: transparent;
+      color: var(--texto);
+      text-align: left;
+      font-size: 16px;
+    }
+
+    .lista-exemplos li:first-child .exemplo { border-top: 1px solid var(--regra); }
+
+    .exemplo-lado { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; }
+    .exemplo-meta { color: var(--texto-secundario); }
+    .exemplo-acao { display: none; color: var(--destaque); font-family: var(--sans); font-size: 14px; font-weight: 500; }
+
+    .exemplo:hover, .exemplo:focus-visible { background: var(--superficie); }
+    .exemplo:focus-visible { outline: 2px solid var(--destaque); outline-offset: -2px; }
+    .exemplo:hover .exemplo-meta, .exemplo:focus-visible .exemplo-meta { display: none; }
+    .exemplo:hover .exemplo-acao, .exemplo:focus-visible .exemplo-acao { display: inline; }
+
+    /* ===== Carregamento ===== */
+    .etapas { list-style: none; padding: 0; margin-top: 28px; }
+
+    .etapa { display: flex; align-items: baseline; gap: 12px; padding: 6px 0; font-size: 16px; }
+
+    .etapa-marca { width: 14px; font-size: 14px; line-height: 1; text-align: center; }
+    .etapa.concluida .etapa-marca { color: var(--destaque); }
+    .etapa.atual { font-weight: 500; }
+    .etapa.pendente { color: var(--texto-secundario); }
+
+    .cancelar { margin-top: 16px; }
+
+    /* ===== Resposta ===== */
+    .resposta-direta {
+      margin-top: 24px;
+      font-family: var(--serifa);
+      font-size: clamp(24px, 2.4vw, 28px);
+      font-weight: 500;
+      line-height: 1.3;
+    }
+
+    .texto-resposta p, .texto-resposta ul { margin-top: 12px; max-width: 640px; }
+    .texto-resposta ul { padding-left: 1.2rem; }
+    .texto-resposta li + li { margin-top: 4px; }
+
+    .citacao {
+      font-family: var(--mono);
+      font-size: 0.62em;
+      font-weight: 500;
+      text-decoration: none;
+      margin-left: 1px;
+    }
+
+    .citacao:hover { text-decoration: underline; }
+
+    .aviso-rascunho {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-top: 20px;
+      padding: 10px 14px;
+      border-radius: var(--raio);
+      background: var(--rascunho-suave);
+      font-size: 14px;
+    }
+
+    .aviso-rotulo { flex: 0 0 auto; color: var(--rascunho); font-weight: 600; }
+
+    .fontes { margin-top: 28px; }
+
+    .lista-fontes { list-style: none; padding: 0; margin-top: 6px; }
+
+    .fonte {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      column-gap: 12px;
+      align-items: baseline;
+      padding: 12px 0;
+      border-top: 1px solid var(--regra);
+    }
+
+    .fonte:target { background: var(--superficie); }
+
+    .fonte-num { font-family: var(--mono); font-size: 13px; color: var(--destaque); }
+    .fonte-id { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+    .fonte-desc { margin-top: 2px; color: var(--texto-secundario); font-size: 14px; }
+    .fonte-desc .mono { font-size: 13px; }
+    .fonte a { font-size: 14px; white-space: nowrap; }
+
+    .acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; margin-top: 16px; }
+
+    .retorno { color: var(--texto-secundario); font-size: 14px; }
+
+    /* ===== Lacuna ===== */
+    .bloco { margin-top: 28px; }
+
+    .contato { margin-top: 6px; font-size: 16px; }
+
+    .registrar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 28px; }
+    .registrar .retorno { flex: 1 1 260px; }
+
+    .pagina-proxima { margin-top: 6px; padding: 10px 0; border-top: 1px solid var(--regra); border-bottom: 1px solid var(--regra); }
+
+    /* ===== Lateral ===== */
+    .lateral { padding-left: 24px; border-left: 1px solid var(--regra); }
+
+    .painel + .painel { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--regra); }
+
+    .estado-geral, .estado { font-size: 13px; }
+    .estado-geral { margin-top: 8px; }
+    .estado-rascunho { color: var(--rascunho); }
+    .estado-revisada { color: var(--destaque); }
+    .estado-neutro { color: var(--texto-secundario); }
+    .marcador { margin-right: 6px; font-size: 10px; vertical-align: 1px; }
+
+    .lista-paginas { list-style: none; padding: 0; margin-top: 12px; }
+    .lista-paginas li + li { margin-top: 12px; }
+    .pagina-nome { font-size: 15px; font-weight: 500; }
+    .pagina-data { margin-top: 2px; font-family: var(--mono); font-size: 12px; color: var(--texto-secundario); }
+
+    .nota-lateral { margin-top: 8px; color: var(--texto-secundario); font-size: 14px; line-height: 1.5; }
+
+    .lista-metodo { margin-top: 12px; padding: 0; list-style: none; counter-reset: passo; }
+    .lista-metodo li { display: flex; gap: 10px; font-size: 14px; counter-increment: passo; }
+    .lista-metodo li + li { margin-top: 12px; }
+    .lista-metodo li::before { content: counter(passo); font-family: var(--mono); color: var(--destaque); }
+
+    /* ===== Telas menores ===== */
+    @media (max-width: 899px) {
+      .corpo { grid-template-columns: minmax(0, 1fr); }
+      .lateral { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--regra); }
+    }
+
+    @media (max-width: 640px) {
+      .moldura { padding: 0 16px 48px; }
+      header { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .cabecalho-meta { flex-wrap: wrap; gap: 4px 16px; }
+      .cabecalho-meta a { display: inline-flex; align-items: center; min-height: 44px; }
+      .dica { display: none; }
+      .botao-primario, .botao-secundario, .botao-link { min-height: 44px; }
+      .botao-primario { margin-left: auto; }
+      .exemplo { flex-direction: column; gap: 2px; min-height: 56px; }
+      .exemplo:hover .exemplo-meta { display: inline; }
+      .exemplo:hover .exemplo-acao { display: none; }
+      .fonte { grid-template-columns: 24px minmax(0, 1fr); }
+      .fonte a { grid-column: 2; display: inline-flex; align-items: center; min-height: 44px; }
+      .aviso-rascunho { flex-direction: column; gap: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <p class="faixa">Demonstração com dados fictícios. Nenhuma informação desta tela é real.</p>
+  <div class="moldura">
+    <header>
+      <div class="marca">
+        <p class="marca-nome">CAEX</p>
+        <p class="marca-sub">Oráculo da wiki</p>
+      </div>
+      <div class="cabecalho-meta">
+        <p id="data-wiki" class="data-wiki">Carregando a wiki…</p>
+        <a href="https://github.com/rebecaruivo/caex-llm-wiki">Código no GitHub</a>
+      </div>
+    </header>
+    <div class="corpo">
+      <main class="principal" id="principal" aria-live="polite"></main>
+      <aside id="lateral" class="lateral" aria-label="Sobre a wiki"></aside>
+    </div>
+  </div>
+  <noscript><p>Ative o JavaScript para consultar a wiki.</p></noscript>
+
+  <script>
+    /* ===== Configuração ===== */
+
+    // Perguntas de exemplo. "pagina" liga a pergunta a uma página da wiki;
+    // o número de fontes vem de /api/wiki. Sem página = lacuna proposital.
+    const EXEMPLOS = [
+      { pergunta: "Quando será a Semana de Integração?", tema: "Eventos", pagina: "Semana de Integração" },
+      { pergunta: "Como crio um grupo de trabalho?", tema: "Grupos de trabalho", pagina: "Grupos de trabalho" },
+      { pergunta: "Qual é o quórum de uma assembleia?", tema: null, pagina: null }
+    ];
+
+    const LIMITE = 500;
+    const ALERTA = 450;
+    const FRASE_LACUNA = "Não encontrei isso na wiki";
+    const TEXTOS = {
+      curta: "Escreva uma pergunta com pelo menos 3 caracteres.",
+      limite: "Limite de 500 caracteres",
+      erro: "Não consegui consultar a wiki agora.",
+      lacunaRegistrada: "Registrado. A gestão vai avaliar.",
+      erroRegistrado: "Enviado. A gestão vai revisar esta resposta.",
+      falhaRegistro: "Não foi possível registrar agora. Tente de novo mais tarde.",
+      faltaComplemento: "Perguntas sobre esses temas ficam sem resposta até a gestão adicionar as fontes."
+    };
+
+    /* ===== Estado ===== */
+    let wiki = null;
+    let wikiPromise = null;
+    let controlador = null;
+    let emAndamento = false;
+
+    /* ===== Utilitários de DOM ===== */
+    // Todo texto entra com textContent. A resposta vem de um modelo e é tratada como não confiável.
+    function el(tag, props, filhos) {
+      const node = document.createElement(tag);
+      for (const [chave, valor] of Object.entries(props || {})) {
+        if (valor == null || valor === false) continue;
+        if (chave === "text") node.textContent = String(valor);
+        else if (chave === "class") node.className = valor;
+        else if (chave === "disabled") node.disabled = true;
+        else node.setAttribute(chave, String(valor));
+      }
+      for (const filho of filhos || []) {
+        if (filho) node.appendChild(typeof filho === "string" ? document.createTextNode(filho) : filho);
+      }
+      return node;
+    }
+
+    function limpar(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+    function principal() { return document.getElementById("principal"); }
+
+    function formatarData(iso) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+      return m ? `${m[3]}/${m[2]}/${m[1]}` : "";
+    }
+
+    function focar(id) {
+      const node = document.getElementById(id);
+      if (!node) return;
+      if (!node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
+      node.focus();
+    }
+
+    /* ===== Dados da wiki ===== */
+    function buscarWiki() {
+      if (!wikiPromise) {
+        wikiPromise = fetch("/api/wiki")
+          .then((r) => { if (!r.ok) throw new Error("wiki"); return r.json(); })
+          .then((dados) => { wiki = dados; mostrarData(); return true; })
+          .catch(() => { wiki = null; wikiPromise = null; mostrarData(); return false; });
+      }
+      return wikiPromise;
+    }
+
+    function mostrarData() {
+      const alvo = document.getElementById("data-wiki");
+      const data = formatarData(wiki && wiki.atualizado_em);
+      alvo.textContent = data ? `Wiki atualizada em ${data}` : "Data da wiki indisponível";
+    }
+
+    function paginas() { return wiki && Array.isArray(wiki.paginas) ? wiki.paginas : []; }
+
+    function catalogoFontes() {
+      const mapa = new Map();
+      for (const f of (wiki && wiki.fontes) || []) if (f && f.id) mapa.set(String(f.id), f);
+      return mapa;
+    }
+
+    function paginasDasFontes(ids) {
+      const conjunto = new Set(ids);
+      return paginas().filter((p) => (p.fontes || []).some((id) => conjunto.has(id)));
+    }
+
+    function rotuloEstado(pagina) {
+      if (pagina.status === "rascunho") return { classe: "estado-rascunho", texto: "Rascunho · aguarda a gestão" };
+      if (pagina.validado_em) return { classe: "estado-revisada", texto: `Revisada em ${formatarData(pagina.validado_em)}` };
+      return { classe: "estado-neutro", texto: pagina.status ? String(pagina.status) : "Sem estado informado" };
+    }
+
+    function linhaEstado(classe, texto, extra) {
+      return el("p", { class: `${extra || "estado"} ${classe}` }, [
+        el("span", { class: "marcador", "aria-hidden": "true", text: "■" }), texto
+      ]);
+    }
+
+    /* ===== Lateral ===== */
+    function listaPaginas(lista, comData) {
+      const todasRascunho = lista.length > 0 && lista.every((p) => p.status === "rascunho" && !p.validado_em);
+      const frag = document.createDocumentFragment();
+      if (todasRascunho) {
+        frag.appendChild(linhaEstado("estado-rascunho", "Todas em rascunho, aguardando validação da gestão", "estado-geral"));
+      }
+      const ul = el("ul", { class: "lista-paginas" });
+      for (const p of lista) {
+        const li = el("li", {}, [el("p", { class: "pagina-nome", text: p.titulo || "Página sem título" })]);
+        if (!todasRascunho) {
+          const r = rotuloEstado(p);
+          li.appendChild(linhaEstado(r.classe, r.texto));
+        }
+        if (comData && p.atualizado_em) li.appendChild(el("p", { class: "pagina-data", text: `Atualizada em ${formatarData(p.atualizado_em)}` }));
+        ul.appendChild(li);
+      }
+      frag.appendChild(ul);
+      return frag;
+    }
+
+    function fraseFaltas(itens) {
+      const partes = itens.map((t, i) => {
+        const limpo = String(t).trim().replace(/[.;]+$/, "");
+        return i === 0 ? limpo : limpo.charAt(0).toLowerCase() + limpo.slice(1);
+      }).filter(Boolean);
+      if (!partes.length) return "";
+      return `${partes.join(", ")}. ${TEXTOS.faltaComplemento}`;
+    }
+
+    function lateralInicio() {
+      const lateral = document.getElementById("lateral");
+      limpar(lateral);
+      const cobre = el("section", { class: "painel" }, [el("h2", { class: "secao-titulo", text: "O que a wiki cobre" })]);
+      if (!wiki) cobre.appendChild(el("p", { class: "nota-lateral", text: wikiPromise ? "Carregando as páginas…" : "Não foi possível carregar as páginas da wiki." }));
+      else if (!paginas().length) cobre.appendChild(el("p", { class: "nota-lateral", text: "Nenhuma página publicada." }));
+      else cobre.appendChild(listaPaginas(paginas(), false));
+      lateral.appendChild(cobre);
+
+      const faltas = wiki && Array.isArray(wiki.ainda_nao_cobre) ? wiki.ainda_nao_cobre : [];
+      if (faltas.length) {
+        lateral.appendChild(el("section", { class: "painel" }, [
+          el("h2", { class: "secao-titulo", text: "Ainda não cobre" }),
+          el("p", { class: "nota-lateral", text: fraseFaltas(faltas) })
+        ]));
+      }
+    }
+
+    function lateralMetodo() {
+      const lateral = document.getElementById("lateral");
+      limpar(lateral);
+      const ol = el("ol", { class: "lista-metodo" });
+      for (const passo of ["Procura só na wiki do CAEX, nunca na internet.", "Cita a ata ou o documento de cada informação.", "Se não encontra fonte, avisa em vez de inventar."]) {
+        ol.appendChild(el("li", { text: passo }));
+      }
+      lateral.appendChild(el("section", { class: "painel" }, [el("h2", { class: "secao-titulo", text: "Como o oráculo responde" }), ol]));
+    }
+
+    function lateralLigadas(ids) {
+      const lateral = document.getElementById("lateral");
+      limpar(lateral);
+      const secao = el("section", { class: "painel" }, [
+        el("h2", { class: "secao-titulo", text: "Páginas ligadas às fontes" }),
+        el("p", { class: "nota-lateral", text: "Páginas da wiki que usam os mesmos documentos citados na resposta." })
+      ]);
+      const lista = paginasDasFontes(ids);
+      if (lista.length) secao.appendChild(listaPaginas(lista, true));
+      else secao.appendChild(el("p", { class: "nota-lateral", text: "Nenhuma página da wiki usa essas fontes." }));
+      lateral.appendChild(secao);
+    }
+
+    /* ===== Tratamento da resposta ===== */
+    function ehAvisoRascunho(linha) {
+      const t = linha.trim();
+      return /^[-*_\s]*aviso\b/i.test(t) && /rascunho/i.test(t);
+    }
+
+    function ehLacuna(texto) {
+      const linhas = String(texto || "").split("\n").map((l) => l.trim()).filter((l) => l && !ehAvisoRascunho(l));
+      return linhas.length > 0 && linhas[0].replace(/^[-*_\s]+/, "").startsWith(FRASE_LACUNA);
+    }
+
+    // Troca [fonte: ID] por marcas internas numeradas. IDs fora da wiki são removidos.
+    function marcarCitacoes(texto, validos) {
+      const ordem = [];
+      const numeros = new Map();
+      const limpo = texto.replace(/\[fonte:\s*([^\]]+?)\s*\]/g, (_, bruto) => {
+        const id = bruto.trim();
+        if (!validos.has(id)) return "";
+        if (!numeros.has(id)) { ordem.push(id); numeros.set(id, ordem.length); }
+        return `${numeros.get(id)}`;
+      })
+        .replace(/[ \t]+/g, "")
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/ +([.,;:!?])/g, "$1")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      return { limpo, ordem };
+    }
+
+    function textoVisivel(limpo) {
+      return limpo.replace(/\d+/g, "").replace(/\*\*([^*]+)\*\*/g, "$1").trim();
+    }
+
+    function preparar(bruta, removerFraseLacuna) {
+      let base = String(bruta || "").replace(/\r\n/g, "\n");
+      base = base.split("\n").filter((l) => !ehAvisoRascunho(l)).join("\n");
+      if (removerFraseLacuna) {
+        const i = base.indexOf(FRASE_LACUNA);
+        if (i !== -1) base = (base.slice(0, i) + base.slice(i + FRASE_LACUNA.length)).replace(/^[\s.:;—-]+/, "");
+      }
+      const resultado = marcarCitacoes(base, new Set(catalogoFontes().keys()));
+      resultado.paraCopiar = textoVisivel(resultado.limpo);
+      return resultado;
+    }
+
+    function separarFrase(texto) {
+      const m = /^(.+?[.!?](?:\d+)*)(?=\s|$)/s.exec(texto);
+      if (!m) return { frase: texto.replace(/\s*\n\s*/g, " ").trim(), resto: "" };
+      return { frase: m[1].replace(/^\s*[-*]\s+/, "").replace(/\s*\n\s*/g, " ").trim(), resto: texto.slice(m[0].length).trim() };
+    }
+
+    function criarCitacao(n) {
+      return el("sup", {}, [el("a", { class: "citacao", href: `#fonte-${n}`, "aria-label": `Fonte ${n}`, text: String(n) })]);
+    }
+
+    function adicionarInline(pai, texto) {
+      const re = /(\d+)|\*\*([^*]+)\*\*/g;
+      let ultimo = 0;
+      let m;
+      while ((m = re.exec(texto))) {
+        if (m.index > ultimo) pai.appendChild(document.createTextNode(texto.slice(ultimo, m.index)));
+        if (m[1]) pai.appendChild(criarCitacao(Number(m[1])));
+        else { const forte = el("strong"); adicionarInline(forte, m[2]); pai.appendChild(forte); }
+        ultimo = m.index + m[0].length;
+      }
+      if (ultimo < texto.length) pai.appendChild(document.createTextNode(texto.slice(ultimo)));
+    }
+
+    function renderizarBlocos(destino, texto) {
+      for (const bloco of String(texto || "").split(/\n{2,}/)) {
+        const linhas = bloco.split("\n").map((l) => l.trim()).filter(Boolean);
+        let i = 0;
+        while (i < linhas.length) {
+          if (/^[-*]\s+/.test(linhas[i])) {
+            const ul = el("ul");
+            while (i < linhas.length && /^[-*]\s+/.test(linhas[i])) {
+              const li = el("li"); adicionarInline(li, linhas[i].replace(/^[-*]\s+/, "")); ul.appendChild(li); i += 1;
+            }
+            destino.appendChild(ul);
+          } else {
+            const partes = [];
+            while (i < linhas.length && !/^[-*]\s+/.test(linhas[i])) { partes.push(linhas[i]); i += 1; }
+            const p = el("p"); adicionarInline(p, partes.join(" ")); destino.appendChild(p);
+          }
+        }
+      }
+    }
+
+    function extrairEmails(texto) {
+      return [...new Set(String(texto || "").match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [])];
+    }
+
+    /* ===== Peças da resposta ===== */
+    function avisoRascunho(ids) {
+      const usa = paginasDasFontes(ids).some((p) => p.status === "rascunho");
+      if (!usa) return null;
+      return el("div", { class: "aviso-rascunho" }, [
+        el("p", { class: "aviso-rotulo" }, [el("span", { class: "marcador", "aria-hidden": "true", text: "■" }), "Rascunho"]),
+        el("p", { text: "Esta resposta usa uma página que a gestão ainda não validou. A informação pode mudar." })
+      ]);
+    }
+
+    function secaoFontes(ordem) {
+      if (!ordem.length) return null;
+      const catalogo = catalogoFontes();
+      const ol = el("ol", { class: "lista-fontes" });
+      ordem.forEach((id, i) => {
+        const n = i + 1;
+        const f = catalogo.get(id) || {};
+        const desc = el("p", { class: "fonte-desc" });
+        if (f.titulo) desc.appendChild(document.createTextNode(f.titulo));
+        if (f.titulo && f.data) desc.appendChild(document.createTextNode(" · "));
+        if (f.data) desc.appendChild(el("span", { class: "mono", text: formatarData(f.data) }));
+        const url = typeof f.url === "string" && /^https?:\/\//i.test(f.url) ? f.url : null;
+        ol.appendChild(el("li", { class: "fonte", id: `fonte-${n}` }, [
+          el("span", { class: "fonte-num", text: String(n) }),
+          el("div", {}, [el("p", { class: "fonte-id", text: id }), desc]),
+          url ? el("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: "Abrir documento" }) : null
+        ]));
+      });
+      return el("section", { class: "fontes", "aria-labelledby": "titulo-fontes" }, [
+        el("h2", { id: "titulo-fontes", class: "secao-titulo", text: "Fontes" }), ol
+      ]);
+    }
+
+    async function registrar(tipo, pergunta, resposta) {
+      const r = await fetch("/api/registros", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tipo, pergunta, resposta: String(resposta || "").slice(0, 4000) })
+      });
+      if (!r.ok) throw new Error("registro");
+    }
+
+    async function copiar(texto) {
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(texto);
+      const area = el("textarea", { readonly: "readonly" });
+      area.value = texto;
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      if (!ok) throw new Error("copiar");
+    }
+
+    function acoesResposta(pergunta, bruta, paraCopiar) {
+      const retorno = el("p", { class: "retorno", role: "status" });
+      const botaoCopiar = el("button", { type: "button", class: "botao-link", text: "Copiar resposta" });
+      botaoCopiar.addEventListener("click", async () => {
+        try { await copiar(paraCopiar); retorno.textContent = "Copiado"; }
+        catch { retorno.textContent = "Não foi possível copiar."; }
+      });
+      const botaoErro = el("button", { type: "button", class: "botao-link", text: "Informar erro" });
+      botaoErro.addEventListener("click", async () => {
+        botaoErro.disabled = true;
+        try { await registrar("erro", pergunta, bruta); retorno.textContent = TEXTOS.erroRegistrado; }
+        catch { botaoErro.disabled = false; retorno.textContent = TEXTOS.falhaRegistro; }
+      });
+      return el("div", { class: "acoes" }, [botaoCopiar, botaoErro, retorno]);
+    }
+
+    /* ===== Campo de pergunta ===== */
+    function criarCampo({ valor = "", seguinte = false, mensagem = "", textoBotao = "Perguntar" } = {}) {
+      const form = el("form", { class: seguinte ? "form-pergunta form-seguinte" : "form-pergunta", novalidate: "novalidate" });
+      const rotulo = seguinte
+        ? el("label", { for: "pergunta", class: "rotulo-visivel", text: "Faça outra pergunta" })
+        : el("label", { for: "pergunta", class: "oculto", text: "Sua pergunta sobre o CAEX" });
+      const area = el("textarea", {
+        id: "pergunta", name: "pergunta", rows: "2", maxlength: String(LIMITE),
+        placeholder: seguinte ? "Escreva sua pergunta" : "Ex.: quem organiza a Semana de Integração?",
+        "aria-describedby": "contador-pergunta mensagem-pergunta"
+      });
+      area.value = String(valor).slice(0, LIMITE);
+      const contador = el("span", { id: "contador-pergunta", class: "contador", "aria-live": "off" });
+      const botao = el("button", { type: "submit", class: "botao-primario", text: textoBotao });
+      const aviso = el("p", { id: "mensagem-pergunta", class: "mensagem-campo", "aria-live": "polite" });
+      let fixa = mensagem;
+
+      function ajustarAltura() {
+        area.style.height = "auto";
+        const linha = 24;
+        const alvo = Math.min(Math.max(area.scrollHeight, linha * 2), linha * 6);
+        area.style.height = `${alvo}px`;
+        area.style.overflowY = area.scrollHeight > linha * 6 ? "auto" : "hidden";
+      }
+
+      function sincronizar() {
+        const n = area.value.length;
+        contador.textContent = `${n} / ${LIMITE}`;
+        contador.classList.toggle("perto", n >= ALERTA);
+        botao.disabled = area.value.trim().length === 0 || emAndamento;
+        const texto = n >= LIMITE ? TEXTOS.limite : fixa;
+        aviso.textContent = texto;
+        aviso.classList.toggle("limite", n >= LIMITE);
+        if (fixa && n < LIMITE) area.setAttribute("aria-invalid", "true");
+        else area.removeAttribute("aria-invalid");
+        ajustarAltura();
+      }
+
+      function tentar(evento) {
+        if (evento) evento.preventDefault();
+        if (emAndamento) return;
+        if (area.value.trim().length < 3) { fixa = TEXTOS.curta; sincronizar(); return; }
+        enviar(area.value);
+      }
+
+      area.addEventListener("input", () => { fixa = ""; sincronizar(); });
+      area.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); tentar(); }
+      });
+      form.addEventListener("submit", tentar);
+
+      form.append(rotulo, el("div", { class: "campo" }, [
+        area,
+        el("div", { class: "campo-rodape" }, [
+          contador,
+          el("span", { class: "dica", text: "Enter envia · Shift + Enter quebra a linha" }),
+          botao
+        ])
+      ]), aviso);
+      requestAnimationFrame(sincronizar);
+      sincronizar();
+      return form;
+    }
+
+    function focarCampo() {
+      const area = document.getElementById("pergunta");
+      if (!area) return;
+      area.focus();
+      area.setSelectionRange(area.value.length, area.value.length);
+    }
+
+    /* ===== Perguntas de exemplo ===== */
+    function metaExemplo(item) {
+      if (!item.pagina) return "Sem registro na wiki";
+      const pagina = paginas().find((p) => p.titulo === item.pagina);
+      if (!pagina) return item.tema || "";
+      const n = (pagina.fontes || []).length;
+      return `${item.tema} · ${n} ${n === 1 ? "fonte" : "fontes"}`;
+    }
+
+    function exemplos() {
+      const ul = el("ul", { class: "lista-exemplos" });
+      for (const item of EXEMPLOS) {
+        const botao = el("button", { type: "button", class: "exemplo" }, [
+          el("span", { text: item.pergunta }),
+          el("span", { class: "exemplo-lado" }, [
+            el("span", { class: "exemplo-meta", "data-exemplo": item.pergunta, text: metaExemplo(item) }),
+            el("span", { class: "exemplo-acao", "aria-hidden": "true", text: "Perguntar →" })
+          ])
+        ]);
+        botao.addEventListener("click", () => enviar(item.pergunta));
+        ul.appendChild(el("li", {}, [botao]));
+      }
+      return el("section", { class: "exemplos", "aria-labelledby": "titulo-exemplos" }, [
+        el("h2", { id: "titulo-exemplos", class: "secao-titulo", text: "Perguntas de exemplo" }), ul
+      ]);
+    }
+
+    function atualizarMetas() {
+      for (const item of EXEMPLOS) {
+        const alvo = document.querySelector(`[data-exemplo="${CSS.escape(item.pergunta)}"]`);
+        if (alvo) alvo.textContent = metaExemplo(item);
+      }
+    }
+
+    function blocoPergunta(pergunta) {
+      return el("div", {}, [
+        el("p", { class: "rotulo", text: "Você perguntou" }),
+        el("p", { class: "pergunta-titulo", text: pergunta })
+      ]);
+    }
+
+    /* ===== Telas ===== */
+    function renderInicio(valor = "", mensagem = "") {
+      emAndamento = false;
+      const main = principal();
+      limpar(main);
+      main.append(
+        el("h1", { class: "titulo-inicio", text: "O que você quer saber sobre o CAEX?" }),
+        el("p", { class: "intro", text: "Cada resposta vem da wiki do Centro Acadêmico, com a ata ou o documento de onde saiu. Se a wiki não tiver a informação, o oráculo diz isso e indica quem procurar." }),
+        criarCampo({ valor, mensagem }),
+        exemplos()
+      );
+      lateralInicio();
+    }
+
+    const ETAPAS = ["Pergunta enviada", "Procurando nas páginas da wiki…", "Conferindo as fontes citadas"];
+
+    function renderCarregando(pergunta) {
+      const main = principal();
+      limpar(main);
+      const lista = el("ol", { class: "etapas", id: "etapas", "aria-label": "Andamento da consulta" });
+      ETAPAS.forEach((texto, i) => lista.appendChild(el("li", { class: "etapa pendente", "data-etapa": String(i) }, [
+        el("span", { class: "etapa-marca", "aria-hidden": "true", text: "○" }),
+        el("span", { text: texto }),
+        el("span", { class: "oculto", text: " (pendente)" })
+      ])));
+      const cancelar = el("button", { type: "button", class: "botao-link cancelar", text: "Cancelar" });
+      cancelar.addEventListener("click", () => cancelarConsulta(pergunta));
+      main.append(blocoPergunta(pergunta), lista, cancelar);
+      lateralMetodo();
+    }
+
+    // Avança a lista conforme eventos reais: envio, chegada da resposta e conferência das fontes.
+    function marcarEtapa(atual) {
+      for (const li of document.querySelectorAll("#etapas .etapa")) {
+        const i = Number(li.dataset.etapa);
+        const estado = i < atual ? "concluida" : i === atual ? "atual" : "pendente";
+        li.className = `etapa ${estado}`;
+        li.querySelector(".etapa-marca").textContent = estado === "concluida" ? "✓" : estado === "atual" ? "●" : "○";
+        li.querySelector(".oculto").textContent = estado === "concluida" ? " (concluída)" : estado === "atual" ? " (em andamento)" : " (pendente)";
+      }
+    }
+
+    function renderResposta(pergunta, bruta) {
+      const prep = preparar(bruta, false);
+      const partes = separarFrase(prep.limpo);
+      const main = principal();
+      limpar(main);
+      const direta = el("p", { class: "resposta-direta", id: "titulo-resultado" });
+      adicionarInline(direta, partes.frase);
+      const corpo = el("div", { class: "texto-resposta" });
+      renderizarBlocos(corpo, partes.resto);
+      main.append(
+        blocoPergunta(pergunta),
+        direta,
+        corpo,
+        avisoRascunho(prep.ordem) || document.createTextNode(""),
+        secaoFontes(prep.ordem) || document.createTextNode(""),
+        acoesResposta(pergunta, bruta, prep.paraCopiar),
+        criarCampo({ seguinte: true })
+      );
+      lateralLigadas(prep.ordem);
+      emAndamento = false;
+      focar("titulo-resultado");
+    }
+
+    function renderLacuna(pergunta, bruta) {
+      const prep = preparar(bruta, true);
+      const main = principal();
+      limpar(main);
+      const explicacao = el("div", { class: "texto-resposta" });
+      renderizarBlocos(explicacao, prep.limpo);
+      main.append(blocoPergunta(pergunta), el("h1", { class: "titulo-resultado", id: "titulo-resultado", text: "A wiki não tem essa informação." }), explicacao);
+
+      const emails = extrairEmails(bruta);
+      if (emails.length) {
+        const contatos = el("div", { class: "bloco" }, [el("h2", { class: "secao-titulo", text: "Quem pode responder" })]);
+        for (const email of emails) contatos.appendChild(el("p", { class: "contato" }, [el("a", { href: `mailto:${email}`, text: email })]));
+        main.appendChild(contatos);
+      }
+
+      const retorno = el("p", { class: "retorno", role: "status", text: "A gestão recebe a pergunta e decide se o tema entra na wiki." });
+      const botao = el("button", { type: "button", class: "botao-secundario", text: "Registrar como lacuna" });
+      botao.addEventListener("click", async () => {
+        botao.disabled = true;
+        try { await registrar("lacuna", pergunta, bruta); retorno.textContent = TEXTOS.lacunaRegistrada; }
+        catch { botao.disabled = false; retorno.textContent = TEXTOS.falhaRegistro; }
+      });
+      main.appendChild(el("div", { class: "registrar" }, [botao, retorno]));
+
+      const proximas = paginasDasFontes(prep.ordem);
+      if (proximas.length) {
+        main.appendChild(el("div", { class: "bloco" }, [
+          el("h2", { class: "secao-titulo", text: "Página mais próxima" }),
+          el("p", { class: "pagina-proxima", text: proximas[0].titulo })
+        ]));
+      }
+      main.appendChild(criarCampo({ seguinte: true }));
+      lateralInicio();
+      emAndamento = false;
+      focar("titulo-resultado");
+    }
+
+    function renderErro(pergunta) {
+      const main = principal();
+      limpar(main);
+      emAndamento = false;
+      main.append(
+        el("h1", { class: "titulo-resultado", id: "titulo-resultado", text: TEXTOS.erro }),
+        el("p", { class: "intro", text: "Sua pergunta continua no campo abaixo. Tente de novo em alguns instantes." }),
+        criarCampo({ valor: pergunta, textoBotao: "Tentar de novo" })
+      );
+      lateralInicio();
+      focar("titulo-resultado");
+    }
+
+    /* ===== Consulta ===== */
+    async function enviar(texto) {
+      if (emAndamento) return;
+      const pergunta = String(texto).trim();
+      if (pergunta.length < 3) { renderInicio(texto, TEXTOS.curta); focarCampo(); return; }
+      emAndamento = true;
+      const atual = new AbortController();
+      controlador = atual;
+      renderCarregando(pergunta);
+      marcarEtapa(0);
+      try {
+        const pedido = fetch("/api/perguntar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pergunta }),
+          signal: atual.signal
+        });
+        marcarEtapa(1);
+        const resposta = await pedido;
+        if (resposta.status === 422) { renderInicio(pergunta, TEXTOS.curta); focarCampo(); return; }
+        if (!resposta.ok) throw new Error("http");
+        const dados = await resposta.json();
+        if (!dados || typeof dados.resposta !== "string") throw new Error("formato");
+        marcarEtapa(2);
+        await buscarWiki();
+        if (atual.signal.aborted) return;
+        if (ehLacuna(dados.resposta)) renderLacuna(pergunta, dados.resposta);
+        else renderResposta(pergunta, dados.resposta);
+      } catch (erro) {
+        if (erro && erro.name === "AbortError") return;
+        renderErro(pergunta);
+      } finally {
+        if (controlador === atual) controlador = null;
+        emAndamento = false;
+      }
+    }
+
+    function cancelarConsulta(pergunta) {
+      if (controlador) controlador.abort();
+      emAndamento = false;
+      renderInicio(pergunta);
+      focarCampo();
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && emAndamento && controlador) {
+        const titulo = document.querySelector("#principal .pergunta-titulo");
+        cancelarConsulta(titulo ? titulo.textContent : "");
+      }
+    });
+
+    renderInicio();
+    buscarWiki().then(() => {
+      atualizarMetas();
+      if (document.querySelector("#principal .titulo-inicio")) lateralInicio();
+    });
+  </script>
+</body>
+</html>
