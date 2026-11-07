@@ -102,12 +102,12 @@ def versao_contexto(modelo_prompt, wiki):
     return hashlib.sha256((modelo_prompt + wiki).encode("utf-8")).hexdigest()[:12]
 
 
-def responder(pergunta, chave, modelo, modelo_prompt=None, wiki=None, validos=None):
+def responder(pergunta, chave, modelo, modelo_prompt=None, wiki=None, validos=None, tentativas=5):
     """Responde uma pergunta usando só a wiki e devolve a resposta com as fontes."""
     modelo_prompt = modelo_prompt if modelo_prompt is not None else carregar_prompt()
     wiki = wiki if wiki is not None else montar_wiki()
     validos = validos if validos is not None else ids_validos()
-    texto = chamar_gemini(montar_prompt(pergunta, modelo_prompt, wiki), modelo, chave)
+    texto = chamar_gemini(montar_prompt(pergunta, modelo_prompt, wiki), modelo, chave, tentativas)
     return {
         "resposta": texto,
         "fontes": sorted(set(CITACAO.findall(texto)) & validos),
