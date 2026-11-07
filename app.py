@@ -4,9 +4,11 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from oraculo import MODELO_PADRAO, ErroApi, carregar_env, responder
+from oraculo import MODELO_PADRAO, ErroApi, carregar_env, responder, resumo_wiki
 
 carregar_env()
+
+REPOSITORIO = os.environ.get("REPOSITORIO_URL", "https://github.com/rebecaruivo/caex-llm-wiki/blob/main")
 
 app = FastAPI(
     title="Oráculo do CAEX",
@@ -29,6 +31,15 @@ class Resposta(BaseModel):
 def saude():
     """Confirma que a API está no ar, sem chamar o Gemini."""
     return {"status": "ok"}
+
+
+@app.get("/api/wiki")
+def wiki():
+    """Descreve as páginas, o que falta e as fontes, lendo os arquivos da wiki."""
+    dados = resumo_wiki()
+    for fonte in dados["fontes"]:
+        fonte["url"] = f"{REPOSITORIO}/{fonte['arquivo']}"
+    return dados
 
 
 @app.post("/api/perguntar", response_model=Resposta)

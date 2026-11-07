@@ -113,3 +113,57 @@ def responder(pergunta, chave, modelo, modelo_prompt=None, wiki=None, validos=No
         "fontes": sorted(set(CITACAO.findall(texto)) & validos),
         "citacoes_invalidas": citacoes_invalidas(texto, validos),
     }
+
+
+def ler_frontmatter(texto):
+    """Lê o bloco entre --- no topo de uma página e devolve um dicionário."""
+    if not texto.startswith("---"):
+        return {}
+    bloco = texto.split("---", 2)[1]
+    dados = {}
+    for linha in bloco.strip().splitlines():
+        if ":" not in linha:
+            continue
+        chave, valor = (parte.strip() for parte in linha.split(":", 1))
+        if valor.startswith("[") and valor.endswith("]"):
+            valor = [item.strip() for item in valor[1:-1].split(",") if item.strip()]
+        elif valor == "null":
+            valor = None
+        dados[chave] = valor
+    return dados
+
+
+def resumo_wiki():
+    """Descreve o que a wiki cobre, o que falta e as fontes, a partir dos arquivos."""
+    paginas = []
+    for pasta in ("processos", "decisoes"):
+        for arquivo in sorted((ROOT / "wiki" / pasta).glob("*.md")):
+            meta = ler_frontmatter(arquivo.read_text(encoding="utf-8"))
+            paginas.append({
+                "titulo": meta.get("titulo"),
+                "tipo": meta.get("tipo"),
+                "status": meta.get("status"),
+                "atualizado_em": meta.get("atualizado_em"),
+                "validado_em": meta.get("validado_em"),
+                "fontes": meta.get("fontes", []),
+            })
+
+    pendencias = (ROOT / "wiki/pendencias.md").read_text(encoding="utf-8")
+    faltando = []
+    if "## Documentos faltando" in pendencias:
+        trecho = pendencias.split("## Documentos faltando", 1)[1].split("\n## ", 1)[0]
+        faltando = [linha.split("]", 1)[1].strip() for linha in trecho.splitlines() if linha.startswith("- [ ]")]
+
+    manifesto = json.loads((ROOT / "sources/manifest.json").read_text(encoding="utf-8"))
+    fontes = [
+        {"id": f["id"], "titulo": f["titulo"], "tipo": f["tipo"], "data": f["data"], "arquivo": f["arquivo"]}
+        for f in manifesto["fontes"]
+        if f["uso"] == "wiki"
+    ]
+    datas = [p["atualizado_em"] for p in paginas if p["atualizado_em"]]
+    return {
+        "atualizado_em": max(datas) if datas else None,
+        "paginas": paginas,
+        "ainda_nao_cobre": faltando,
+        "fontes": fontes,
+    }
