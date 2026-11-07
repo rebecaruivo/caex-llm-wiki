@@ -1,0 +1,37 @@
+{
+  "executado_em": "2026-11-06-231112",
+  "modelo": "gemini-3.5-flash-lite",
+  "commit": "28a3d5f",
+  "hash_prompt_e_wiki": "1e68db02355c",
+  "aprovados": 1,
+  "total": 1,
+  "erros": 0,
+  "resultados": [
+    {
+      "id": "E01",
+      "tipo": "atualizacao",
+      "pergunta": "Quando será a Semana de Integração?",
+      "resposta": "Aviso: A página consultada está em rascunho.\n\nA data vigente para a realização da Semana de Integração é 22/04/2030 [fonte: ATA-2030-03-18]. Esta informação é uma decisão e pode mudar. \n\nHá um histórico registrado: a assembleia havia aprovado inicialmente a data de 15/04/2030 [fonte: ATA-2030-03-10], mas a reunião de 18/03/2030 reagendou o evento para 22/04/2030 [fonte: ATA-2030-03-18]. Além disso, existe uma contradição registrada na ata de 02/04/2030, que cita uma assembleia de 10/04, sendo que a aprovação ocorreu em 10/03; trata-se de um provável erro de digitação na fonte, mantido sem alteração [fonte: ATA-2030-04-02] [fonte: ATA-2030-03-10].",
+      "fontes": [
+        "ATA-2030-03-10",
+        "ATA-2030-03-18",
+        "ATA-2030-04-02"
+      ],
+      "citacoes_invalidas": [],
+      "aprovado": true,
+      "criterios": [
+        {
+          "criterio": "22/04/2030",
+          "atendido": true,
+          "motivo": "A resposta informa explicitamente que a data é 22/04/2030."
+        },
+        {
+          "criterio": "cita a mudança de data",
+          "atendido": true,
+          "motivo": "A resposta menciona que a data foi alterada da inicial 15/04/2030 para 22/04/2030."
+        }
+      ],
+      "fontes_faltando": []
+    }
+  ]
+}
