@@ -10,9 +10,11 @@ from uuid import UUID
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
+from tools.lint_wiki import revisar
 from oraculo import MODELO_PADRAO, ErroApi, carregar_env, reescrever, responder, resumo_wiki
 
 carregar_env()
@@ -69,10 +71,19 @@ def exigir_banco():
         raise HTTPException(status_code=503, detail="O histórico ainda não está configurado.")
 
 
+app.mount("/static", StaticFiles(directory=RAIZ / "static"), name="static")
+
+
 @app.get("/", include_in_schema=False)
 def interface():
     """Entrega a página do oráculo, no mesmo domínio da API."""
     return FileResponse(RAIZ / "static" / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/revisar", include_in_schema=False)
+def pagina_revisao():
+    """Entrega a página de revisão da wiki (lint)."""
+    return FileResponse(RAIZ / "static" / "revisar.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/saude")
@@ -88,6 +99,27 @@ def wiki():
     for fonte in dados["fontes"]:
         fonte["url"] = f"{REPOSITORIO}/{fonte['arquivo']}"
     return dados
+
+
+def publico(problema):
+    """Prepara um problema do lint para a página pública, sem expor e-mails."""
+    detalhe = problema["detalhe"]
+    if problema["problema"].startswith("E-mail"):
+        detalhe = "Endereço oculto nesta página. Veja no terminal com tools/lint_wiki.py."
+    return {chave: problema[chave] for chave in ("tipo", "pagina", "problema", "acao")} | {"detalhe": detalhe}
+
+
+@app.get("/api/lint")
+def lint():
+    """Roda a revisão automática da wiki. Não usa IA e não altera nada."""
+    resultado = revisar(RAIZ)
+    return {
+        "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "paginas": resultado["paginas"],
+        "testes": resultado["testes"],
+        "erros": [publico(p) for p in resultado["erros"]],
+        "avisos": [publico(p) for p in resultado["avisos"]],
+    }
 
 
 @app.post("/api/perguntar", response_model=Resposta)
