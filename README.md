@@ -4,7 +4,7 @@
 
 Base de conhecimento para um oráculo que responde dúvidas internas com fontes e admite quando não sabe.
 
-**Estado:** wiki, prompts, validador e avaliação automática prontos. API, chat e automação ainda serão construídos.
+**Estado:** wiki, avaliação automática e API publicadas. Chat e automação ainda serão construídos.
 
 ## Resultado atual
 Com `gemini-3.5-flash-lite`, a versão atual passou em 35 de 36 respostas, ou 97%, em 3 rodadas dos 12 testes.
@@ -19,6 +19,22 @@ Com `gemini-3.5-flash-lite`, a versão atual passou em 35 de 36 respostas, ou 97
 A versão C também passou a medir menções desnecessárias à contradição. Por isso, os resultados não são totalmente comparáveis entre todas as versões.
 
 A avaliação combina checagem de citações por código e critérios avaliados por um modelo de linguagem. Ela verifica se cada citação existe, mas ainda não confirma se a fonte comprova a frase.
+
+## API
+A API está publicada em [caex-llm-wiki.vercel.app/docs](https://caex-llm-wiki.vercel.app/docs), com uma página para testar as chamadas no navegador.
+
+| Endereço | Método | Função |
+|---|---|---|
+| `/api/saude` | GET | Confirma que a API está no ar |
+| `/api/perguntar` | POST | Responde usando só a wiki e devolve as fontes |
+
+```bash
+curl -X POST https://caex-llm-wiki.vercel.app/api/perguntar \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta": "Quando será a Semana de Integração?"}'
+```
+
+A API e a avaliação usam a mesma função `responder`, em `oraculo.py`. Assim, os testes medem o mesmo código publicado.
 
 **Principal aprendizado:** depois de vários ajustes de prompt, a solução mais eficaz foi tirar do contexto o campo que confundia o modelo.
 
