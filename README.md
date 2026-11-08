@@ -62,14 +62,15 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 |---|---|
 | `sources/` | Fontes fictícias e manifesto |
 | `CLAUDE.md` | Regras do agente mantenedor |
-| `prompts/` | Prompts do compilador e do oráculo |
+| `prompts/` | Prompts do compilador, do classificador e do oráculo |
 | `wiki/` | Conhecimento compilado |
 | `evals/` | 12 testes com critérios de avaliação |
-| `config_ingestao.py` | Constantes e switches da ingestão |
-| `ingerir.py` | Núcleo do compilador (hash, source_id, contrato JSON) |
+| `config_ingestao.py` | Constantes, switches e regexes da ingestão |
+| `ingerir.py` | Núcleo do compilador, triagem e substituição de nomes |
 | `tests/` | Suíte determinística com `unittest`, sem rede |
 | `tools/lint_wiki.py` | Validador automático |
 | `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
+| `tools/triar_local.py` | Triagem local: pré-filtro, classificador e nomes |
 
 ## Como usar
 ```bash
@@ -111,6 +112,43 @@ Contrato mínimo: o modelo recebe a wiki com linhas numeradas e hash
 "texto": "... [fonte: ID]"}`; qualquer outro tipo é recusado. A citação precisa
 existir e apontar para um ID conhecido do manifesto. Se a operação informar
 `linha` e `hash`, o hash precisa bater com a linha atual.
+
+## Triagem e quarentena
+Antes do compilador, cada fonte passa por uma triagem determinística:
+
+1. **Pré-filtro.** Os regexes de `config_ingestao.PREFILTRO` procuram, no
+   título e no texto, frases dirigidas à IA (ignorar instruções, mudar de
+   papel, revelar prompt de sistema, jailbreak). Palavras isoladas como
+   `ignorar`, `regra` ou `instrução` não disparam. A frase legítima “a
+   assembleia decidiu ignorar a regra anterior de votação” passa. Um acerto
+   marca `quarentena` sem chamar modelo, sem alterar páginas e sem abrir PR.
+2. **Classificador.** Uma única chamada em modo JSON ao
+   `prompts/classificador-ingest.md` devolve `injecao`, `sinais` e `nomes`.
+   Título e texto são sempre dado, nunca instrução. `nomes` traz só pessoas
+   naturais, no span exato; cargos, setores e organizações ficam fora.
+3. **Nomes.** Cada span exato é trocado por `[nome removido]` em todas as
+   ocorrências, com diferença de maiúsculas: “Rosa” vira `[nome removido]`,
+   mas “camiseta rosa” não muda.
+4. **Veredito.** Injeção verdadeira sem liberação da gestão marca
+   `quarentena`, notifica e encerra. Quarentena não entra no manifesto, não
+   altera páginas e não abre PR. Com `liberado_pela_gestao`, o pré-filtro é
+   pulado, os nomes continuam sendo usados e o veredito de injeção é ignorado.
+5. **Falhas.** Formato inválido ou erro de API marca `falhou` com motivo
+   `classificacao`.
+
+As funções reutilizáveis ficam em `ingerir.py`: `prefiltro`, `classificar`,
+`substituir_nomes`, `contar_substituicoes` e `triar`. O `triar` recebe os
+efeitos colaterais por injeção (`atualizar_status`, `notificar`,
+`liberar_lock`), então os testes rodam sem rede. Para uma prévia local:
+
+```bash
+python3 tools/triar_local.py \
+  --titulo "Ata de 10/04" --texto-arquivo ata.md --derivado-saida derivada.md
+```
+
+A saída mostra só resultado, motivo e contagens; nunca imprime nomes nem o
+texto bruto da fonte. Códigos de saída: `0` aprovada, `1` quarentena e `2`
+falha ou entrada inválida.
 
 Para testar o oráculo em um agente, peça:
 
