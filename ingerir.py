@@ -1109,7 +1109,11 @@ def aplicar_operacoes(
             nova_linha = _formatar_linha(texto)
             linha = operacao.get("linha")
             hash_referencia = operacao.get("hash")
-            exigir_citacao = secao in SECOES_COM_CITACAO
+            relativo_pagina = caminho.relative_to(raiz).as_posix()
+            exigir_citacao = (
+                secao in SECOES_COM_CITACAO
+                or relativo_pagina == "wiki/glossario.md"
+            )
             if linha is not None:
                 if isinstance(linha, bool) or not isinstance(linha, int):
                     raise ErroOperacao("'linha' precisa ser um inteiro")
@@ -1130,6 +1134,8 @@ def aplicar_operacoes(
             _validar_citacoes(texto, fontes_validas, exigir=exigir_citacao)
             if linha is not None:
                 linhas.insert(linha, nova_linha)
+            elif relativo_pagina == "wiki/glossario.md":
+                linhas.append(nova_linha)
             else:
                 _inserir_na_secao(linhas, secao, nova_linha)
             marcar_alterada(caminho)
@@ -1145,22 +1151,28 @@ def aplicar_operacoes(
             nova_fonte = operacao.get("nova_fonte")
             if not isinstance(nova_fonte, str) or not nova_fonte:
                 raise ErroOperacao("marcar_substituida sem 'nova_fonte'")
-            data = str(operacao.get("data") or data_documento or "")
+            nova_info = info_fonte(nova_fonte)
+            if nova_info is None:
+                raise ErroOperacao(f"fonte nova desconhecida: {nova_fonte}")
+            data_informada = operacao.get("data")
+            data = str(
+                data_informada
+                or data_documento
+                or nova_info.get("data")
+                or ""
+            )
             try:
                 nova_data = date.fromisoformat(data)
             except ValueError as erro:
                 raise ErroOperacao(f"marcar_substituida com data inválida: {data!r}") from erro
             if (
-                data_documento
-                and nova_fonte == source_id
-                and data != data_documento
+                data_informada is not None
+                and nova_info.get("data")
+                and str(data_informada) != str(nova_info["data"])
             ):
                 raise ErroOperacao(
-                    "marcar_substituida com data diferente da data do documento"
+                    "marcar_substituida com data diferente da data da fonte nova"
                 )
-            nova_info = info_fonte(nova_fonte)
-            if nova_info is None:
-                raise ErroOperacao(f"fonte nova desconhecida: {nova_fonte}")
             nova_autoridade = nova_info.get("autoridade")
             if nova_autoridade not in AUTORIDADE:
                 raise ErroOperacao(

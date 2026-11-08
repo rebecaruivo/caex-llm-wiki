@@ -40,6 +40,35 @@ def referencia(raiz, texto="- Fato existente. [fonte: ATA-2030-03-10]"):
     return indice + 1, ingerir.hash_linha(linhas[indice])
 
 
+def criar_glossario(raiz):
+    (raiz / "wiki/glossario.md").write_text(
+        """---
+id: glossario
+titulo: Glossário
+tipo: referencia
+status: rascunho
+confianca: alta
+fontes: [ATA-2030-03-10]
+atualizado_em: 2030-03-10
+validado_por: null
+validado_em: null
+---
+
+# Glossário
+
+- **CAEX:** centro acadêmico. [fonte: ATA-2030-03-10]
+""",
+        encoding="utf-8",
+    )
+    indice = raiz / "wiki/index.md"
+    texto = indice.read_text(encoding="utf-8")
+    if "glossario.md" not in texto:
+        texto = texto.replace(
+            "## Manutenção", "- [Glossário](glossario.md)\n\n## Manutenção"
+        )
+        indice.write_text(texto, encoding="utf-8")
+
+
 def criar_contatos(raiz):
     (raiz / "wiki/contatos.md").write_text(
         """---
@@ -496,6 +525,46 @@ class PendenciasTest(unittest.TestCase):
                 ],
             )
         self.assertEqual(self.pendencias.read_text(encoding="utf-8"), antes)
+
+    def test_glossario_pode_receber_linha_citada(self):
+        criar_glossario(self.raiz)
+        glossario = self.raiz / "wiki/glossario.md"
+        ingerir.aplicar_operacoes(
+            self.raiz,
+            [
+                {
+                    "tipo": "adicionar_linha",
+                    "pagina": "wiki/glossario.md",
+                    "texto": "**GT:** grupo de trabalho. [fonte: ATA-2030-04-10]",
+                }
+            ],
+            {"ATA-2030-03-10", "ATA-2030-04-10"},
+            fonte=fonte(),
+            source_id="ATA-2030-04-10",
+            data_documento="2030-04-10",
+        )
+        texto = glossario.read_text(encoding="utf-8")
+        self.assertIn("- **GT:** grupo de trabalho. [fonte: ATA-2030-04-10]", texto)
+        self.assertIn("ATA-2030-04-10", texto.split("---", 2)[1])
+        self.assertEqual(revisar(self.raiz)["erros"], [])
+
+    def test_glossario_sem_citacao_e_recusado(self):
+        criar_glossario(self.raiz)
+        with self.assertRaises(ingerir.ErroOperacao):
+            ingerir.aplicar_operacoes(
+                self.raiz,
+                [
+                    {
+                        "tipo": "adicionar_linha",
+                        "pagina": "wiki/glossario.md",
+                        "texto": "**GT:** grupo de trabalho.",
+                    }
+                ],
+                {"ATA-2030-03-10", "ATA-2030-04-10"},
+                fonte=fonte(),
+                source_id="ATA-2030-04-10",
+                data_documento="2030-04-10",
+            )
 
     def test_contatos_vira_pendencia_sem_editar(self):
         criar_contatos(self.raiz)
