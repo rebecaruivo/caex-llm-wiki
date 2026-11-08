@@ -84,12 +84,12 @@ class CliTest(unittest.TestCase):
 
     def test_operacao_nao_suportada_termina_com_erro_claro(self):
         def modelo_invalido(prompt):
-            return json.dumps({"operacoes": [{"tipo": "criar_pagina"}]})
+            return json.dumps({"operacoes": [{"tipo": "apagar_linha"}]})
 
         codigo, saida = self.executar(modelo=modelo_invalido)
         self.assertEqual(codigo, 2)
-        self.assertIn("criar_pagina", saida)
-        self.assertIn("adicionar_linha", saida)
+        self.assertIn("apagar_linha", saida)
+        self.assertIn("não suportada", saida)
 
     def test_ajuda_funciona(self):
         saida = io.StringIO()

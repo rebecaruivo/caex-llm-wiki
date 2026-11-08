@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from config_ingestao import (  # noqa: F401  (re-exportado para consumidores)
+    AUTORIDADE_POR_TIPO,
     DOMINIO_INSTITUCIONAL,
     MAX_BYTES,
     MAX_TENTATIVAS,
@@ -30,6 +31,32 @@ ROOT = Path(__file__).resolve().parent
 BASE_URL = os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
 CITACAO = re.compile(r"\[fonte: ([A-Z0-9-]+)\]")
 FONTES_VALIDAS_PLACEHOLDER = "{{fontes_validas}}"
+
+# Hierarquia de autoridade da especificação §7.4.
+AUTORIDADE = {
+    "oficial": 4,
+    "ca-deliberativa": 3,
+    "ca-operacional": 2,
+    "relato": 1,
+}
+
+SECOES_OBRIGATORIAS = (
+    "Resumo",
+    "O que as fontes dizem",
+    "O que ainda não sabemos",
+    "Quem procurar",
+    "Páginas relacionadas",
+)
+SECOES_COM_CITACAO = ("O que as fontes dizem", "Passo a passo")
+PASTAS_POR_TIPO_PAGINA = {"processos": "processo", "decisoes": "decisao"}
+ARQUIVOS_DO_CODIGO = ("wiki/index.md", "wiki/log.md", "wiki/pendencias.md")
+ARQUIVO_CONTATOS = "wiki/contatos.md"
+TIPOS_OPERACAO = (
+    "adicionar_linha",
+    "marcar_substituida",
+    "atualizar_resumo",
+    "criar_pagina",
+)
 
 
 class ErroApi(Exception):
@@ -46,6 +73,31 @@ class ErroResposta(Exception):
 
 class ErroOperacao(Exception):
     """Operação recusada pelo código antes de tocar nos arquivos."""
+
+
+class ErroPii(ErroOperacao):
+    """Nome ou dado pessoal em texto gerado."""
+
+
+class ErroLint(ErroOperacao):
+    """Lint da wiki recusou a proposta; guarda a lista exata de erros."""
+
+    def __init__(self, erros):
+        self.erros = list(erros)
+        super().__init__("lint recusou a proposta: " + "; ".join(self.erros))
+
+
+class ErroCompilacao(ErroOperacao):
+    """Compilação falhou depois de todas as tentativas."""
+
+    def __init__(self, motivo, erros, tentativas):
+        self.motivo = motivo
+        self.erros = list(erros)
+        self.tentativas = tentativas
+        super().__init__(
+            f"compilação falhou após {tentativas} tentativas "
+            f"(motivo: {motivo}): " + "; ".join(self.erros)
+        )
 
 
 # Contrato JSON pedido ao Gemini em modo estruturado.
@@ -236,7 +288,7 @@ def montar_contexto_numerado(raiz):
     return "\n".join(partes)
 
 
-def montar_prompt_compilador(fonte, source_id, contexto, fontes_validas):
+def montar_prompt_compilador(fonte, source_id, contexto, fontes_validas, erros=None):
     """Preenche o prompt do compilador sem reinterpretar o texto da fonte."""
     template = (ROOT / "prompts/compilador.md").read_text(encoding="utf-8")
     valores = {
@@ -249,7 +301,15 @@ def montar_prompt_compilador(fonte, source_id, contexto, fontes_validas):
     }
     for marcador, valor in valores.items():
         template = template.replace(marcador, valor)
-    return template.replace("{{fonte_texto}}", fonte["texto"])
+    prompt = template.replace("{{fonte_texto}}", fonte["texto"])
+    if erros:
+        bloco = "\n".join(f"- {erro}" for erro in erros)
+        prompt += (
+            "\n\n## Erros da tentativa anterior\n\n"
+            f"{bloco}\n\n"
+            "Corrija todos os erros e responda de novo, apenas com o JSON."
+        )
+    return prompt
 
 
 def _carregar_resposta(texto):
@@ -469,14 +529,70 @@ def _formatar_linha(texto):
     return f"- {texto}"
 
 
-def _validar_citacoes(texto, fontes_validas):
+def _validar_citacoes(texto, fontes_validas, exigir=True):
     citadas = CITACAO.findall(texto)
-    if not citadas:
+    if exigir and not citadas:
         raise ErroOperacao("linha sem citação [fonte: ID]")
     desconhecidas = sorted(set(citadas) - set(fontes_validas))
     if desconhecidas:
         raise ErroOperacao(f"citação de fonte desconhecida: {', '.join(desconhecidas)}")
     return citadas
+
+
+def contem_nome(texto, nomes):
+    """Indica se `texto` contém algum nome, sem caixa e por palavra inteira."""
+    for nome in _nomes_ordenados(nomes):
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        if re.search(padrao, str(texto), re.IGNORECASE):
+            return True
+    return False
+
+
+def _strings_de(valor):
+    if isinstance(valor, str):
+        return [valor]
+    if isinstance(valor, list):
+        textos = []
+        for item in valor:
+            textos.extend(_strings_de(item))
+        return textos
+    if isinstance(valor, dict):
+        textos = []
+        for item in valor.values():
+            textos.extend(_strings_de(item))
+        return textos
+    return []
+
+
+def _textos_gerados(dados):
+    """Textos da proposta que virarão páginas, índice, log ou pendências."""
+    textos = []
+    for campo in ("fatos_novos", "mudancas"):
+        for item in dados.get(campo, []):
+            if isinstance(item, dict):
+                textos.append(str(item.get("texto", "")))
+    for item in dados.get("lacunas", []):
+        if isinstance(item, dict):
+            textos.append(str(item.get("texto", "")))
+    for item in dados.get("contradicoes", []):
+        if isinstance(item, dict):
+            textos.append(str(item.get("resumo", "")))
+    for operacao in dados.get("operacoes", []):
+        if not isinstance(operacao, dict):
+            continue
+        if "texto" in operacao:
+            textos.append(str(operacao.get("texto", "")))
+        if operacao.get("tipo") == "criar_pagina":
+            textos.extend(_strings_de(operacao.get("secoes") or {}))
+    return textos
+
+
+def _validar_textos_gerados(dados, nomes):
+    if not nomes:
+        return
+    for texto in _textos_gerados(dados):
+        if contem_nome(texto, nomes):
+            raise ErroPii("nome de pessoa em texto gerado")
 
 
 def _indice_da_secao(linhas, secao):
@@ -485,6 +601,13 @@ def _indice_da_secao(linhas, secao):
         if linha.strip() == alvo:
             return indice
     raise ErroOperacao(f"seção não encontrada: {secao!r}")
+
+
+def _secao_da_linha(linhas, numero):
+    for indice in range(min(numero, len(linhas)) - 1, -1, -1):
+        if linhas[indice].startswith("## "):
+            return _normalizar_secao(linhas[indice])
+    return ""
 
 
 def _inserir_na_secao(linhas, secao, nova_linha):
@@ -500,6 +623,19 @@ def _inserir_na_secao(linhas, secao, nova_linha):
     linhas.insert(posicao, nova_linha)
     if posicao + 1 < len(linhas) and linhas[posicao + 1].startswith("## "):
         linhas.insert(posicao + 1, "")
+
+
+def _substituir_secao(linhas, secao, novas_linhas):
+    inicio = _indice_da_secao(linhas, secao)
+    fim = len(linhas)
+    for indice in range(inicio + 1, len(linhas)):
+        if linhas[indice].startswith("## "):
+            fim = indice
+            break
+    novas = [""] + list(novas_linhas)
+    if fim < len(linhas):
+        novas.append("")
+    linhas[inicio + 1 : fim] = novas
 
 
 def _sincronizar_fontes(linhas):
@@ -522,6 +658,50 @@ def _sincronizar_fontes(linhas):
         return
 
 
+def _definir_campo(linhas, campo, valor):
+    if not linhas or linhas[0].strip() != "---":
+        return
+    try:
+        fim = linhas.index("---", 1)
+    except ValueError:
+        return
+    for indice in range(1, fim):
+        if re.match(rf"^{re.escape(campo)}:", linhas[indice]):
+            linhas[indice] = f"{campo}: {valor}"
+            return
+    linhas.insert(fim, f"{campo}: {valor}")
+
+
+def _atualizar_frontmatter_tocado(linhas, data_documento):
+    """Volta a página tocada a rascunho e atualiza a data, mantendo confiança."""
+    if not linhas or linhas[0].strip() != "---":
+        return
+    _definir_campo(linhas, "status", "rascunho")
+    _definir_campo(linhas, "validado_por", "null")
+    _definir_campo(linhas, "validado_em", "null")
+    if not data_documento:
+        return
+    try:
+        nova = date.fromisoformat(str(data_documento))
+    except ValueError:
+        return
+    atual = None
+    try:
+        fim = linhas.index("---", 1)
+    except ValueError:
+        return
+    for indice in range(1, fim):
+        casamento = re.match(r"^atualizado_em:\s*(\S+)", linhas[indice])
+        if casamento:
+            try:
+                atual = date.fromisoformat(casamento.group(1))
+            except ValueError:
+                atual = None
+            break
+    if atual is None or nova > atual:
+        _definir_campo(linhas, "atualizado_em", nova.isoformat())
+
+
 def _caminho_da_pagina(raiz, pagina):
     if not isinstance(pagina, str) or not pagina.strip():
         raise ErroOperacao("operação sem 'pagina'")
@@ -537,94 +717,721 @@ def _caminho_da_pagina(raiz, pagina):
     return alvo
 
 
-def aplicar_operacoes(raiz, operacoes, fontes_validas):
-    """Aplica operações `adicionar_linha` de forma atômica (só grava no fim)."""
+def _caminho_novo(raiz, caminho):
+    if not isinstance(caminho, str) or not caminho.strip():
+        raise ErroOperacao("criar_pagina sem 'caminho'")
+    relativo = Path(caminho)
+    if relativo.is_absolute() or ".." in relativo.parts or relativo.suffix != ".md":
+        raise ErroOperacao(f"caminho de página nova inválido: {caminho!r}")
+    partes = relativo.parts
+    if (
+        len(partes) != 3
+        or partes[0] != "wiki"
+        or partes[1] not in PASTAS_POR_TIPO_PAGINA
+    ):
+        raise ErroOperacao(
+            "página nova só pode ficar em wiki/processos ou wiki/decisoes"
+        )
+    alvo = (Path(raiz) / relativo).resolve()
+    wiki = (Path(raiz) / "wiki").resolve()
+    if not alvo.is_relative_to(wiki):
+        raise ErroOperacao(f"página fora da wiki: {caminho!r}")
+    if alvo.exists():
+        raise ErroOperacao(f"página nova já existe: {caminho!r}")
+    return relativo.as_posix(), alvo
+
+
+def _limpar_titulo(titulo, nomes):
+    titulo = str(titulo or "").strip()
+    if not titulo:
+        raise ErroOperacao("criar_pagina sem 'titulo'")
+    for nome in _nomes_ordenados(nomes):
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        titulo = re.sub(padrao, MARCADOR_NOME, titulo, flags=re.IGNORECASE)
+    titulo = re.sub(r"\s+", " ", titulo).strip()
+    if not titulo:
+        raise ErroOperacao("título da página nova ficou vazio")
+    return titulo
+
+
+def _linhas_de_conteudo(valor, formatar=True):
+    if isinstance(valor, str):
+        itens = [valor]
+    elif isinstance(valor, list):
+        itens = valor
+    else:
+        raise ErroOperacao("conteúdo de seção precisa ser texto ou lista de textos")
+    linhas = []
+    for item in itens:
+        if not isinstance(item, str):
+            raise ErroOperacao("conteúdo de seção precisa conter apenas textos")
+        for pedaco in item.splitlines():
+            pedaco = pedaco.strip()
+            if not pedaco:
+                continue
+            linhas.append(_formatar_linha(pedaco) if formatar else pedaco)
+    return linhas
+
+
+def _proximo_id_pendencia(linhas):
+    maior = 0
+    for linha in linhas:
+        for achado in re.findall(r"\bP-(\d+)\b", linha):
+            maior = max(maior, int(achado))
+    return maior + 1
+
+
+def _linha_pendencia(identificador, resumo, fontes):
+    resumo = " ".join(str(resumo).split()).replace("|", "/")
+    citacoes = " ".join(f"[fonte: {fonte}]" for fonte in fontes)
+    return (
+        f"| {identificador} | {resumo} {citacoes} | "
+        "Gerado pelo ingest; revisar a fonte. | Gestão |"
+    )
+
+
+def _inserir_linha_tabela(linhas, nova_linha):
+    indices = [i for i, linha in enumerate(linhas) if linha.lstrip().startswith("|")]
+    if indices:
+        linhas.insert(max(indices) + 1, nova_linha)
+        return
+    posicao = 1
+    while posicao < len(linhas) and not linhas[posicao].startswith("## "):
+        posicao += 1
+    linhas[posicao:posicao] = [
+        "",
+        "| ID | Problema | Tratamento atual | Quem resolve |",
+        "|---|---|---|---|",
+        nova_linha,
+        "",
+    ]
+
+
+def _adicionar_ao_indice(linhas, caminho_relativo, titulo):
+    if f"({caminho_relativo})" in "\n".join(linhas):
+        return
+    pasta = Path(caminho_relativo).parts[0]
+    secao = "## Processos" if pasta == "processos" else "## Decisões"
+    try:
+        inicio = _indice_da_secao(linhas, secao.removeprefix("## "))
+    except ErroOperacao:
+        linhas.extend(["", secao, ""])
+        inicio = len(linhas) - 2
+    fim = len(linhas)
+    for indice in range(inicio + 1, len(linhas)):
+        if linhas[indice].startswith("## "):
+            fim = indice
+            break
+    posicao = fim
+    while posicao > inicio + 1 and linhas[posicao - 1].strip() == "":
+        posicao -= 1
+    linhas.insert(posicao, f"- [{titulo}]({caminho_relativo})")
+    if posicao + 1 < len(linhas) and linhas[posicao + 1].startswith("## "):
+        linhas.insert(posicao + 1, "")
+
+
+def _adicionar_log(linhas, data_documento, source_id, operacoes, novas, contradicoes):
+    if linhas and linhas[-1].strip():
+        linhas.append("")
+    data = data_documento or "data desconhecida"
+    linhas.append(f"## {data}: ingestão de {source_id}")
+    linhas.append("")
+    linhas.append(f"- Operações aplicadas: {operacoes}.")
+    if novas:
+        linhas.append(f"- Páginas novas: {novas}.")
+    if contradicoes:
+        linhas.append(f"- Contradições registradas: {contradicoes}.")
+
+
+def _fontes_da_operacao(operacao, source_id, fontes_validas):
+    citadas = CITACAO.findall(str(operacao.get("texto", "")))
+    if citadas:
+        desconhecidas = set(citadas) - set(fontes_validas)
+        if desconhecidas:
+            raise ErroOperacao(
+                "operação em contatos cita fonte desconhecida: "
+                + ", ".join(sorted(desconhecidas))
+            )
+        return sorted(set(citadas))
+    if source_id and source_id in fontes_validas:
+        return [source_id]
+    raise ErroOperacao("operação em contatos sem fonte para a pendência")
+
+
+def _validar_contradicoes(contradicoes, fontes_validas):
+    itens = []
+    if contradicoes is None:
+        return itens
+    if not isinstance(contradicoes, list):
+        raise ErroOperacao("'contradicoes' precisa ser uma lista")
+    for contradicao in contradicoes:
+        if not isinstance(contradicao, dict):
+            raise ErroOperacao("contradição precisa ser um objeto JSON")
+        resumo = str(contradicao.get("resumo") or "").strip()
+        if not resumo:
+            raise ErroOperacao("contradição sem resumo")
+        fontes = contradicao.get("fontes")
+        if not isinstance(fontes, list) or not fontes:
+            raise ErroOperacao("contradição sem linha P-xx: falta a fonte")
+        for fonte_id in fontes:
+            if not isinstance(fonte_id, str) or fonte_id not in fontes_validas:
+                raise ErroOperacao(
+                    f"contradição cita fonte desconhecida: {fonte_id!r}"
+                )
+        itens.append({"resumo": resumo, "fontes": sorted(set(fontes))})
+    return itens
+
+
+def _snapshot_wiki(raiz):
+    wiki = Path(raiz) / "wiki"
+    return {
+        pagina.relative_to(wiki).as_posix(): pagina.read_text(encoding="utf-8")
+        for pagina in wiki.rglob("*.md")
+    }
+
+
+def _restaurar_wiki(raiz, snapshot):
+    wiki = Path(raiz) / "wiki"
+    atuais = {pagina.relative_to(wiki).as_posix() for pagina in wiki.rglob("*.md")}
+    for relativo in sorted(atuais - set(snapshot)):
+        (wiki / relativo).unlink()
+    for relativo, texto in snapshot.items():
+        destino = wiki / relativo
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(texto, encoding="utf-8")
+
+
+def _erros_lint(raiz, source_id):
+    from tools.lint_wiki import revisar
+
+    resultado = revisar(raiz)
+    erros = []
+    for erro in resultado["erros"]:
+        if (
+            erro["problema"] == "Fonte desconhecida"
+            and source_id
+            and source_id in erro["detalhe"]
+        ):
+            continue
+        erros.append(f"{erro['pagina']}: {erro['mensagem']}")
+    return erros
+
+
+def _validar_proposta(dados):
+    if not isinstance(dados, dict):
+        raise ErroResposta("resposta do modelo precisa ser um objeto JSON")
+    for campo in ("fatos_novos", "mudancas", "contradicoes", "lacunas", "operacoes"):
+        valor = dados.setdefault(campo, [])
+        if not isinstance(valor, list):
+            raise ErroResposta(f"'{campo}' precisa ser uma lista")
+    for operacao in dados["operacoes"]:
+        if not isinstance(operacao, dict):
+            raise ErroResposta("operação precisa ser um objeto JSON")
+        if operacao.get("tipo") not in TIPOS_OPERACAO:
+            raise ErroOperacao(f"operação não suportada: {operacao.get('tipo')!r}")
+    for contradicao in dados["contradicoes"]:
+        if not isinstance(contradicao, dict):
+            raise ErroResposta("contradição precisa ser um objeto JSON")
+    return dados
+
+
+def aplicar_operacoes(
+    raiz,
+    operacoes,
+    fontes_validas,
+    *,
+    manifesto=None,
+    fonte=None,
+    source_id=None,
+    data_documento=None,
+    nomes=None,
+    contradicoes=None,
+):
+    """Aplica a proposta inteira de forma atômica: valida tudo antes de gravar.
+
+    Aceita `adicionar_linha`, `marcar_substituida`, `atualizar_resumo` e
+    `criar_pagina`, além das contradições que viram linhas `P-xx`. O código
+    escreve `index.md`, `log.md` e `pendencias.md`; o modelo nunca os edita.
+    """
     if not isinstance(operacoes, list):
         raise ErroOperacao("'operacoes' precisa ser uma lista")
 
     raiz = Path(raiz).resolve()
+    if manifesto is None:
+        manifesto = carregar_manifesto(raiz)
+    mapa = {item["id"]: item for item in manifesto.get("fontes", [])}
+    nomes = list(nomes or [])
+    data_documento = data_documento or (fonte or {}).get("data")
+    if data_documento is None and source_id and source_id in mapa:
+        data_documento = mapa[source_id].get("data")
+
     paginas = {}
     alteradas = []
+    novas = {}
+    novos_titulos = []
     aplicadas = []
+    substituicoes = 0
+    pendencias_novas = []
+    paginas_com_marcar = set()
+    pendencias_contato = 0
+
+    def info_fonte(fonte_id):
+        if fonte_id in mapa:
+            return mapa[fonte_id]
+        if fonte is not None and fonte_id == source_id:
+            return {
+                "id": fonte_id,
+                "autoridade": AUTORIDADE_POR_TIPO.get(fonte["tipo"]),
+                "data": fonte["data"],
+            }
+        return None
+
+    def carregar(caminho):
+        if caminho not in paginas:
+            paginas[caminho] = caminho.read_text(encoding="utf-8").splitlines()
+        return paginas[caminho]
+
+    def marcar_alterada(caminho):
+        if caminho not in alteradas:
+            alteradas.append(caminho)
+
+    for operacao in operacoes:
+        if isinstance(operacao, dict) and operacao.get("tipo") == "marcar_substituida":
+            referencia_pagina = operacao.get("pagina")
+            if isinstance(referencia_pagina, str):
+                paginas_com_marcar.add(Path(referencia_pagina).as_posix())
 
     for operacao in operacoes:
         if not isinstance(operacao, dict):
             raise ErroOperacao("operação precisa ser um objeto JSON")
         tipo = operacao.get("tipo")
-        if tipo != "adicionar_linha":
-            raise ErroOperacao(
-                f"operação não suportada nesta fatia: {tipo!r}; "
-                "apenas 'adicionar_linha' é aceita"
+        if tipo not in TIPOS_OPERACAO:
+            raise ErroOperacao(f"operação não suportada: {tipo!r}")
+        _validar_textos_gerados({"operacoes": [operacao]}, nomes)
+
+        pagina_ref = operacao.get("pagina")
+        if (
+            tipo in ("adicionar_linha", "marcar_substituida", "atualizar_resumo")
+            and isinstance(pagina_ref, str)
+            and Path(pagina_ref).as_posix() == ARQUIVO_CONTATOS
+        ):
+            pendencias_novas.append(
+                {
+                    "resumo": "Mudança em contatos sugerida pelo ingest; revisar manualmente.",
+                    "fontes": _fontes_da_operacao(operacao, source_id, fontes_validas),
+                }
             )
+            pendencias_contato += 1
+            continue
 
-        caminho = _caminho_da_pagina(raiz, operacao.get("pagina"))
-        if caminho not in paginas:
-            paginas[caminho] = caminho.read_text(encoding="utf-8").splitlines()
+        if tipo == "criar_pagina":
+            caminho_relativo, alvo = _caminho_novo(raiz, operacao.get("caminho"))
+            pasta = Path(caminho_relativo).parts[1]
+            if operacao.get("tipo_pagina") != PASTAS_POR_TIPO_PAGINA[pasta]:
+                raise ErroOperacao(
+                    "tipo_pagina precisa bater com a pasta da página nova"
+                )
+            titulo = _limpar_titulo(operacao.get("titulo"), nomes)
+            secoes = operacao.get("secoes") or {}
+            if not isinstance(secoes, dict):
+                raise ErroOperacao("'secoes' da página nova precisa ser um objeto")
+            conteudo = {}
+            for chave, valor in secoes.items():
+                nome_secao = _normalizar_secao(chave)
+                if nome_secao == "Passo a passo" and pasta != "processos":
+                    raise ErroOperacao(
+                        "página de decisão não aceita 'Passo a passo'"
+                    )
+                if nome_secao not in SECOES_OBRIGATORIAS and nome_secao != "Passo a passo":
+                    raise ErroOperacao(f"seção desconhecida na página nova: {nome_secao!r}")
+                linhas_secao = _linhas_de_conteudo(
+                    valor, formatar=nome_secao != "Resumo"
+                )
+                for linha_secao in linhas_secao:
+                    _validar_citacoes(
+                        linha_secao,
+                        fontes_validas,
+                        exigir=nome_secao in SECOES_COM_CITACAO,
+                    )
+                conteudo[nome_secao] = linhas_secao
 
-        texto = operacao.get("texto")
-        _validar_citacoes(str(texto or ""), fontes_validas)
-        nova_linha = _formatar_linha(texto)
-        linhas = paginas[caminho]
+            ordem = list(SECOES_OBRIGATORIAS)
+            if pasta == "processos":
+                ordem.insert(2, "Passo a passo")
+            corpo = []
+            for nome_secao in ordem:
+                corpo.append(f"## {nome_secao}")
+                corpo.extend(conteudo.get(nome_secao, []))
+                corpo.append("")
+            citadas = sorted(set(CITACAO.findall("\n".join(corpo))))
+            if not data_documento:
+                raise ErroOperacao("criar_pagina exige a data do documento")
+            identificador = alvo.stem
+            novas[alvo] = "\n".join(
+                [
+                    "---",
+                    f"id: {identificador}",
+                    f"titulo: {titulo}",
+                    f"tipo: {PASTAS_POR_TIPO_PAGINA[pasta]}",
+                    "status: rascunho",
+                    "confianca: baixa",
+                    "fontes: [" + ", ".join(citadas) + "]",
+                    f"atualizado_em: {data_documento}",
+                    "validado_por: null",
+                    "validado_em: null",
+                    "---",
+                    "",
+                    f"# {titulo}",
+                    "",
+                    *corpo,
+                ]
+            )
+            novos_titulos.append((caminho_relativo, titulo))
+            aplicadas.append(
+                {"pagina": caminho_relativo, "texto": f"página nova: {titulo}"}
+            )
+            continue
 
-        linha = operacao.get("linha")
-        hash_referencia = operacao.get("hash")
-        if linha is not None:
+        if (
+            isinstance(pagina_ref, str)
+            and Path(pagina_ref).as_posix() in ARQUIVOS_DO_CODIGO
+        ):
+            raise ErroOperacao(
+                f"{Path(pagina_ref).as_posix()} é escrito pelo código; "
+                "o modelo não edita"
+            )
+        caminho = _caminho_da_pagina(raiz, pagina_ref)
+        linhas = carregar(caminho)
+
+        if tipo == "adicionar_linha":
+            secao = _normalizar_secao(operacao.get("secao"))
+            texto = str(operacao.get("texto") or "")
+            nova_linha = _formatar_linha(texto)
+            linha = operacao.get("linha")
+            hash_referencia = operacao.get("hash")
+            relativo_pagina = caminho.relative_to(raiz).as_posix()
+            exigir_citacao = (
+                secao in SECOES_COM_CITACAO
+                or relativo_pagina == "wiki/glossario.md"
+            )
+            if linha is not None:
+                if isinstance(linha, bool) or not isinstance(linha, int):
+                    raise ErroOperacao("'linha' precisa ser um inteiro")
+                if not (1 <= linha <= len(linhas)):
+                    raise ErroOperacao(f"linha fora da página: {linha}")
+                if not isinstance(hash_referencia, str) or not hash_referencia:
+                    raise ErroOperacao("operação com 'linha' precisa informar 'hash'")
+                if hash_linha(linhas[linha - 1]) != hash_referencia:
+                    raise ErroOperacao(
+                        f"linha {linha} desatualizada: hash divergente "
+                        f"(esperado {hash_linha(linhas[linha - 1])})"
+                    )
+                exigir_citacao = exigir_citacao or (
+                    _secao_da_linha(linhas, linha) in SECOES_COM_CITACAO
+                )
+            elif hash_referencia:
+                raise ErroOperacao("'hash' só é aceito junto de 'linha'")
+            _validar_citacoes(texto, fontes_validas, exigir=exigir_citacao)
+            if linha is not None:
+                linhas.insert(linha, nova_linha)
+            elif relativo_pagina == "wiki/glossario.md":
+                linhas.append(nova_linha)
+            else:
+                _inserir_na_secao(linhas, secao, nova_linha)
+            marcar_alterada(caminho)
+            aplicadas.append(
+                {
+                    "pagina": caminho.relative_to(raiz).as_posix(),
+                    "texto": nova_linha,
+                }
+            )
+            continue
+
+        if tipo == "marcar_substituida":
+            nova_fonte = operacao.get("nova_fonte")
+            if not isinstance(nova_fonte, str) or not nova_fonte:
+                raise ErroOperacao("marcar_substituida sem 'nova_fonte'")
+            nova_info = info_fonte(nova_fonte)
+            if nova_info is None:
+                raise ErroOperacao(f"fonte nova desconhecida: {nova_fonte}")
+            data_informada = operacao.get("data")
+            data = str(
+                data_informada
+                or data_documento
+                or nova_info.get("data")
+                or ""
+            )
+            try:
+                nova_data = date.fromisoformat(data)
+            except ValueError as erro:
+                raise ErroOperacao(f"marcar_substituida com data inválida: {data!r}") from erro
+            if (
+                data_informada is not None
+                and nova_info.get("data")
+                and str(data_informada) != str(nova_info["data"])
+            ):
+                raise ErroOperacao(
+                    "marcar_substituida com data diferente da data da fonte nova"
+                )
+            nova_autoridade = nova_info.get("autoridade")
+            if nova_autoridade not in AUTORIDADE:
+                raise ErroOperacao(
+                    f"fonte {nova_fonte} não pode sustentar afirmação"
+                )
+
+            linha = operacao.get("linha")
+            hash_referencia = operacao.get("hash")
             if isinstance(linha, bool) or not isinstance(linha, int):
                 raise ErroOperacao("'linha' precisa ser um inteiro")
             if not (1 <= linha <= len(linhas)):
                 raise ErroOperacao(f"linha fora da página: {linha}")
             if not isinstance(hash_referencia, str) or not hash_referencia:
-                raise ErroOperacao("operação com 'linha' precisa informar 'hash'")
+                raise ErroOperacao("marcar_substituida precisa informar 'hash'")
             if hash_linha(linhas[linha - 1]) != hash_referencia:
                 raise ErroOperacao(
                     f"linha {linha} desatualizada: hash divergente "
                     f"(esperado {hash_linha(linhas[linha - 1])})"
                 )
-            linhas.insert(linha, nova_linha)
-        else:
-            if hash_referencia:
-                raise ErroOperacao("'hash' só é aceito junto de 'linha'")
-            _inserir_na_secao(linhas, _normalizar_secao(operacao.get("secao")), nova_linha)
+            linha_atual = linhas[linha - 1]
+            citadas = CITACAO.findall(linha_atual)
+            if not citadas:
+                raise ErroOperacao("linha substituída precisa citar uma fonte")
+            maior_rank = 0
+            maior_data = None
+            for fonte_citada in citadas:
+                informacao = info_fonte(fonte_citada)
+                if informacao is None:
+                    raise ErroOperacao(
+                        f"linha cita fonte desconhecida: {fonte_citada}"
+                    )
+                autoridade_citada = informacao.get("autoridade")
+                if autoridade_citada not in AUTORIDADE:
+                    raise ErroOperacao(
+                        f"linha cita fonte que não sustenta afirmação: {fonte_citada}"
+                    )
+                maior_rank = max(maior_rank, AUTORIDADE[autoridade_citada])
+                try:
+                    data_citada = date.fromisoformat(str(informacao.get("data", "")))
+                except ValueError:
+                    continue
+                if maior_data is None or data_citada > maior_data:
+                    maior_data = data_citada
+            if AUTORIDADE[nova_autoridade] < maior_rank:
+                raise ErroOperacao(
+                    "fonte de autoridade menor não altera linha de autoridade maior"
+                )
+            if maior_data is None or nova_data <= maior_data:
+                raise ErroOperacao(
+                    "marcar_substituida exige data estritamente maior que a maior data citada"
+                )
+            marca = f" (substituída por [fonte: {nova_fonte}] em {data})"
+            if linha_atual.rstrip().endswith(marca):
+                raise ErroOperacao("linha já foi marcada como substituída")
+            linhas[linha - 1] = linha_atual.rstrip() + marca
+            substituicoes += 1
+            marcar_alterada(caminho)
+            aplicadas.append(
+                {
+                    "pagina": caminho.relative_to(raiz).as_posix(),
+                    "texto": marca.strip(),
+                }
+            )
+            continue
 
-        if caminho not in alteradas:
-            alteradas.append(caminho)
-        aplicadas.append({"pagina": caminho.relative_to(raiz).as_posix(), "texto": nova_linha})
+        if tipo == "atualizar_resumo":
+            caminho_relativo = caminho.relative_to(raiz).as_posix()
+            if caminho_relativo not in paginas_com_marcar:
+                raise ErroOperacao(
+                    "atualizar_resumo exige marcar_substituida válido para a mesma página"
+                )
+            texto = operacao.get("texto")
+            if not isinstance(texto, str) or not texto.strip():
+                raise ErroOperacao("atualizar_resumo com texto vazio")
+            novas_linhas = _linhas_de_conteudo(texto, formatar=False)
+            for linha_resumo in novas_linhas:
+                _validar_citacoes(linha_resumo, fontes_validas, exigir=False)
+            _substituir_secao(linhas, "Resumo", novas_linhas)
+            marcar_alterada(caminho)
+            aplicadas.append(
+                {
+                    "pagina": caminho_relativo,
+                    "texto": "resumo atualizado",
+                }
+            )
+            continue
+
+    contradicoes_validas = _validar_contradicoes(contradicoes, fontes_validas)
+    for contradicao in contradicoes_validas:
+        if contem_nome(contradicao["resumo"], nomes):
+            raise ErroPii("nome de pessoa em texto gerado")
+    pendencias_novas.extend(contradicoes_validas)
+
+    if pendencias_novas:
+        caminho_pendencias = raiz / "wiki/pendencias.md"
+        if not caminho_pendencias.exists():
+            raise ErroOperacao("wiki/pendencias.md ausente")
+        linhas_pendencias = carregar(caminho_pendencias)
+        proximo = _proximo_id_pendencia(linhas_pendencias)
+        for item in pendencias_novas:
+            identificador = f"P-{proximo:02d}"
+            proximo += 1
+            nova_linha = _linha_pendencia(
+                identificador, item["resumo"], item["fontes"]
+            )
+            _inserir_linha_tabela(linhas_pendencias, nova_linha)
+            pendencias_novas_resultado = {
+                "id": identificador,
+                "linha": nova_linha,
+                "fontes": item["fontes"],
+            }
+            item["resultado"] = pendencias_novas_resultado
+        marcar_alterada(caminho_pendencias)
+
+    if novos_titulos:
+        caminho_indice = raiz / "wiki/index.md"
+        if not caminho_indice.exists():
+            raise ErroOperacao("wiki/index.md ausente")
+        linhas_indice = carregar(caminho_indice)
+        for caminho_relativo, titulo in novos_titulos:
+            _adicionar_ao_indice(
+                linhas_indice,
+                caminho_relativo.removeprefix("wiki/"),
+                titulo,
+            )
+        marcar_alterada(caminho_indice)
+
+    if aplicadas or pendencias_novas:
+        caminho_log = raiz / "wiki/log.md"
+        if caminho_log.exists():
+            linhas_log = carregar(caminho_log)
+            _adicionar_log(
+                linhas_log,
+                data_documento,
+                source_id or "fonte",
+                len(aplicadas),
+                len(novas),
+                len(contradicoes_validas),
+            )
+            marcar_alterada(caminho_log)
 
     for caminho in alteradas:
         _sincronizar_fontes(paginas[caminho])
+        _atualizar_frontmatter_tocado(paginas[caminho], data_documento)
         caminho.write_text("\n".join(paginas[caminho]) + "\n", encoding="utf-8")
 
-    return {"aplicadas": aplicadas}
+    for alvo, texto in novas.items():
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        alvo.write_text(texto + "\n", encoding="utf-8")
+
+    return {
+        "aplicadas": aplicadas,
+        "substituicoes": substituicoes,
+        "pendencias": [
+            item["resultado"] for item in pendencias_novas if "resultado" in item
+        ],
+        "novas_paginas": [alvo.relative_to(raiz).as_posix() for alvo in novas],
+        "pendencias_contato": pendencias_contato,
+    }
 
 
-def compilar(fonte, raiz, chamar_modelo, *, source_id=None):
-    """Compila uma fonte local: prompt numerado, modelo JSON, operações, resultado."""
+def compilar(
+    fonte,
+    raiz,
+    chamar_modelo,
+    *,
+    source_id=None,
+    nomes=None,
+    max_tentativas=MAX_TENTATIVAS,
+):
+    """Compila uma fonte local com até `max_tentativas` tentativas.
+
+    Cada tentativa recebe a lista exata de erros da anterior. A proposta é
+    aplicada de forma atômica, o lint roda no repositório e, se algo falhar,
+    a wiki volta ao estado anterior antes da próxima tentativa. Depois de
+    esgotar as tentativas, levanta `ErroCompilacao` com `motivo` (`lint`,
+    `schema`, `pii` ou `compilacao`) e a lista exata de erros.
+    """
     fonte = validar_fonte(fonte)
     raiz = Path(raiz)
-    existentes = set(ids_manifesto(raiz))
+    manifesto = carregar_manifesto(raiz)
+    existentes = set(item["id"] for item in manifesto.get("fontes", []))
     if source_id is None:
         source_id = gerar_source_id(fonte["tipo"], fonte["data"], existentes, fonte["texto"])
     validos = fontes_validas_para_compilar(raiz, source_id)
 
-    prompt = montar_prompt_compilador(
-        fonte, source_id, montar_contexto_numerado(raiz), validos
-    )
-    dados = _carregar_resposta(chamar_modelo(prompt))
-    operacoes = dados.get("operacoes", [])
-    if not isinstance(operacoes, list):
-        raise ErroResposta("'operacoes' precisa ser uma lista")
+    erros_anteriores = []
+    motivo = "compilacao"
 
-    resultado = aplicar_operacoes(raiz, operacoes, validos)
-    return {
-        "source_id": source_id,
-        "fonte": fonte,
-        "fatos_novos": dados.get("fatos_novos", []),
-        "mudancas": dados.get("mudancas", []),
-        "contradicoes": dados.get("contradicoes", []),
-        "lacunas": dados.get("lacunas", []),
-        "operacoes": operacoes,
-        "aplicadas": resultado["aplicadas"],
-    }
+    for tentativa in range(1, max_tentativas + 1):
+        prompt = montar_prompt_compilador(
+            fonte,
+            source_id,
+            montar_contexto_numerado(raiz),
+            validos,
+            erros_anteriores,
+        )
+        try:
+            bruto = chamar_modelo(prompt)
+        except ErroApi as erro:
+            motivo = "compilacao"
+            erros_anteriores = [str(erro)]
+            continue
+
+        try:
+            dados = _validar_proposta(_carregar_resposta(bruto))
+            _validar_textos_gerados(dados, nomes)
+            snapshot = _snapshot_wiki(raiz)
+            try:
+                resultado = aplicar_operacoes(
+                    raiz,
+                    dados["operacoes"],
+                    validos,
+                    manifesto=manifesto,
+                    fonte=fonte,
+                    source_id=source_id,
+                    data_documento=fonte["data"],
+                    nomes=nomes,
+                    contradicoes=dados["contradicoes"],
+                )
+                erros_lint = _erros_lint(raiz, source_id)
+                if erros_lint:
+                    raise ErroLint(erros_lint)
+            except Exception:
+                _restaurar_wiki(raiz, snapshot)
+                raise
+        except ErroPii as erro:
+            motivo = "pii"
+            erros_anteriores = [str(erro)]
+            continue
+        except ErroResposta as erro:
+            motivo = "schema"
+            erros_anteriores = [str(erro)]
+            continue
+        except ErroLint as erro:
+            motivo = "lint"
+            erros_anteriores = erro.erros
+            continue
+        except ErroOperacao as erro:
+            motivo = "compilacao"
+            erros_anteriores = [str(erro)]
+            continue
+
+        return {
+            "source_id": source_id,
+            "fonte": fonte,
+            "fatos_novos": dados["fatos_novos"],
+            "mudancas": dados["mudancas"],
+            "contradicoes": dados["contradicoes"],
+            "lacunas": dados["lacunas"],
+            "operacoes": dados["operacoes"],
+            "aplicadas": resultado["aplicadas"],
+            "substituicoes": resultado["substituicoes"],
+            "pendencias": resultado["pendencias"],
+            "novas_paginas": resultado["novas_paginas"],
+            "tentativas": tentativa,
+        }
+
+    raise ErroCompilacao(motivo, erros_anteriores, max_tentativas)
 
 
 def _transporte_urllib(url, cabecalhos, corpo):

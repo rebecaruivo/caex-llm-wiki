@@ -138,6 +138,16 @@ def main(argv=None, chamar_modelo=None):
     try:
         fonte = _ler_fonte(argumentos)
         return executar(fonte, argumentos.wiki, chamar_modelo)
+    except ingerir.ErroCompilacao as erro:
+        if erro.motivo == "lint":
+            print(f"ERRO: lint com {len(erro.erros)} erros", file=sys.stderr)
+            for mensagem in erro.erros:
+                print(f"  ERRO {mensagem}", file=sys.stderr)
+            return 1
+        print(f"ERRO: {erro}", file=sys.stderr)
+        for mensagem in erro.erros:
+            print(f"  ERRO {mensagem}", file=sys.stderr)
+        return 2
     except (ingerir.ErroFonte, ingerir.ErroOperacao, ingerir.ErroResposta, ingerir.ErroApi) as erro:
         print(f"ERRO: {erro}", file=sys.stderr)
         return 2
