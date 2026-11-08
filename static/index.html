@@ -127,6 +127,7 @@
 
     /* ===== Estado ===== */
     let wiki = null;
+    let metricas = null;          // { perguntas, reaproveitadas } ou null se indisponível
     let chats = [];               // histórico do CA (lista resumida)
     let historicoOk = false;      // false quando o histórico não carregou
     let chatAtual = null;         // { id, titulo, mensagens: [...] }
@@ -226,9 +227,22 @@
         ["Documentos faltando", (wiki.ainda_nao_cobre || []).length],
         ["Atualizada em", dataCurta(wiki.atualizado_em) || "—"]
       ];
+      if (metricas && metricas.perguntas > 0) {
+        const pct = Math.round((100 * metricas.reaproveitadas) / metricas.perguntas);
+        linhas.push(["Respostas reaproveitadas", `${pct}% · ${metricas.reaproveitadas} de ${metricas.perguntas}`]);
+      }
       for (const [rotulo, valor] of linhas) {
         dl.append(el("dt", { text: rotulo }), el("dd", { class: rotulo === "Atualizada em" ? "mono" : "", text: String(valor) }));
       }
+    }
+
+    // Quantas perguntas foram respondidas pelo cache, sem chamar o modelo.
+    async function buscarMetricas() {
+      try {
+        const r = await pedirJson("/api/metricas");
+        metricas = r.ok ? r.corpo : null;
+      } catch (e) { metricas = null; }
+      desenharBase();
     }
 
     /* ===== Leitura da resposta ===== */
@@ -511,6 +525,7 @@
       if (a.lacuna) artigo.appendChild(avisoLacuna(m, a));
 
       const partes = [quando(m.criado_em), a.ids.length === 0 ? "sem fontes" : a.ids.length === 1 ? "1 fonte" : `${a.ids.length} fontes`];
+      if (m.do_cache) partes.push("resposta reaproveitada");
       if (m.naoSalvo) partes.push("não salvo no histórico");
       const retorno = el("p", { class: "retorno", role: "status" });
       const acoes = el("div", { class: "acoes" });
@@ -558,7 +573,7 @@
       try {
         const r = await pedirJson("/api/registros", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tipo, pergunta: m.pergunta, resposta: String(m.resposta || "").slice(0, 4000) })
+          body: JSON.stringify({ tipo, pergunta: m.pergunta, pergunta_interpretada: m.pergunta_interpretada || null, resposta: String(m.resposta || "").slice(0, 4000) })
         });
         if (!r.ok) throw new Error(String(r.status));
         retorno.textContent = sucesso;
@@ -692,7 +707,8 @@
         const mensagem = {
           pergunta, pergunta_interpretada: dados.pergunta_interpretada || null,
           resposta: dados.resposta, fontes: dados.fontes || [],
-          citacoes_invalidas: dados.citacoes_invalidas || [], criado_em: new Date().toISOString(), naoSalvo: !dados.salvo
+          citacoes_invalidas: dados.citacoes_invalidas || [], criado_em: new Date().toISOString(), naoSalvo: !dados.salvo,
+          do_cache: !!dados.do_cache
         };
         if (!chatAtual) chatAtual = { id: dados.chat_id, titulo: pergunta, mensagens: [] };
         else if (dados.chat_id) chatAtual.id = dados.chat_id;
@@ -701,6 +717,7 @@
         pendente = null;
         desenharTudo();
         carregarHistorico();
+        buscarMetricas();
       } catch (erro) {
         if (erro && erro.name === "AbortError") return;
         pendente = null;
@@ -741,6 +758,7 @@
     desenharTudo();
     buscarWiki();
     carregarHistorico();
+    buscarMetricas();
   </script>
 </body>
 </html>

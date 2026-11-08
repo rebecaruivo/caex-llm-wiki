@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -209,3 +210,21 @@ def reescrever(pergunta, historico, chave, modelo, modelo_prompt=None, tentativa
     modelo_prompt = modelo_prompt if modelo_prompt is not None else carregar_prompt_reescrita()
     texto = chamar_gemini(montar_prompt_reescrita(pergunta, anteriores, modelo_prompt), modelo, chave, tentativas)
     return validar_reescrita(texto, pergunta)
+
+
+# ===== Cache de respostas =====
+# Reaproveita a resposta quando a MESMA pergunta já foi respondida com a MESMA wiki.
+# Cache exato, não semântico: "Quando será a Semana?" e "Quando foi aprovada a Semana?"
+# parecem iguais para uma comparação por significado, mas pedem respostas diferentes.
+
+def normalizar_pergunta(pergunta):
+    """Minúsculas, sem acentos, espaços simples e sem pontuação no fim."""
+    texto = unicodedata.normalize("NFKD", pergunta).encode("ascii", "ignore").decode("ascii")
+    texto = re.sub(r"\s+", " ", texto.lower()).strip()
+    return texto.rstrip("?.!; ").strip()
+
+
+def chave_cache(pergunta, versao, modelo):
+    """Junta pergunta, versão do contexto e modelo. Mudou a wiki, mudou a chave."""
+    base = f"{versao}|{modelo}|{normalizar_pergunta(pergunta)}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()

@@ -38,3 +38,18 @@ alter table mensagens enable row level security;
 
 -- Versão completa da pergunta, quando ela dependia das anteriores (passo de reescrita)
 alter table mensagens add column pergunta_interpretada text check (char_length(pergunta_interpretada) <= 500);
+
+-- Cache de respostas: mesma pergunta completa + mesma wiki + mesmo modelo
+create table respostas_cache (
+  chave text primary key check (chave ~ '^[0-9a-f]{64}$'),
+  pergunta text not null,
+  versao text not null,
+  modelo text not null,
+  resposta text not null,
+  fontes jsonb not null default '[]',
+  criado_em timestamptz not null default now()
+);
+alter table respostas_cache enable row level security;
+
+-- Marca as mensagens respondidas pelo cache, para medir a economia
+alter table mensagens add column do_cache boolean not null default false;

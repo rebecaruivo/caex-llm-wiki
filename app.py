@@ -15,7 +15,10 @@ from pydantic import BaseModel, Field
 
 import db
 from tools.lint_wiki import revisar
-from oraculo import MODELO_PADRAO, ErroApi, carregar_env, reescrever, responder, resumo_wiki
+from oraculo import (
+    MODELO_PADRAO, ErroApi, carregar_env, carregar_prompt, chave_cache, montar_wiki,
+    reescrever, responder, resumo_wiki, versao_contexto,
+)
 
 carregar_env()
 
@@ -51,6 +54,7 @@ class Registro(BaseModel):
     tipo: Literal["lacuna", "erro"]
     pergunta: str = Field(min_length=3, max_length=500)
     resposta: str = Field(default="", max_length=4000)
+    pergunta_interpretada: str | None = Field(default=None, max_length=500)
 
 
 class Resposta(BaseModel):
@@ -60,6 +64,7 @@ class Resposta(BaseModel):
     chat_id: str | None = None
     salvo: bool = False
     pergunta_interpretada: str | None = None
+    do_cache: bool = False
 
 
 NAO_ENCONTRADO = "Este chat não existe mais. Alguém do CA pode ter apagado."
@@ -109,6 +114,17 @@ def publico(problema):
     return {chave: problema[chave] for chave in ("tipo", "pagina", "problema", "acao")} | {"detalhe": detalhe}
 
 
+@app.get("/api/metricas")
+def ver_metricas():
+    """Quantas perguntas o CA fez e quantas foram respondidas sem chamar o modelo."""
+    exigir_banco()
+    try:
+        return db.metricas()
+    except db.ErroBanco as erro:
+        print(f"Falha ao ler métricas: {erro}", flush=True)
+        raise HTTPException(status_code=503, detail="Não foi possível ler as métricas agora.") from erro
+
+
 @app.get("/api/lint")
 def lint():
     """Roda a revisão automática da wiki. Não usa IA e não altera nada."""
@@ -155,12 +171,32 @@ def perguntar(dados: Annotated[Pergunta, Body(openapi_examples=EXEMPLOS_PERGUNTA
         except ErroApi as erro:
             print(f"Falha ao reescrever a pergunta: {erro}", flush=True)
 
-    # Passo 2: o oráculo de sempre, avaliado pelos evals, responde a pergunta completa.
-    try:
-        resultado = responder(interpretada, chave, modelo, tentativas=2)
-    except ErroApi as erro:
-        print(f"Falha ao consultar o modelo: {erro}", flush=True)
-        raise HTTPException(status_code=502, detail="Não foi possível consultar o modelo agora. Tente novamente.") from erro
+    # Cache: mesma pergunta completa + mesma wiki + mesmo modelo = mesma resposta.
+    versao = versao_contexto(carregar_prompt(), montar_wiki())
+    chave_resposta = chave_cache(interpretada, versao, modelo)
+    guardada = None
+    if db.configurado():
+        try:
+            guardada = db.buscar_cache(chave_resposta)
+        except db.ErroBanco as erro:
+            print(f"Falha ao ler o cache: {erro}", flush=True)
+
+    if guardada:
+        resultado = {"resposta": guardada["resposta"], "fontes": guardada["fontes"], "citacoes_invalidas": []}
+    else:
+        # Passo 2: o oráculo de sempre, avaliado pelos evals, responde a pergunta completa.
+        try:
+            resultado = responder(interpretada, chave, modelo, tentativas=2)
+        except ErroApi as erro:
+            print(f"Falha ao consultar o modelo: {erro}", flush=True)
+            raise HTTPException(status_code=502, detail="Não foi possível consultar o modelo agora. Tente novamente.") from erro
+        # Só entra no cache resposta sem citação inválida.
+        if db.configurado() and not resultado["citacoes_invalidas"]:
+            try:
+                db.guardar_cache(chave_resposta, interpretada, versao, modelo, resultado)
+            except db.ErroBanco as erro:
+                print(f"Falha ao guardar no cache: {erro}", flush=True)
+    resultado["do_cache"] = bool(guardada)
 
     # Salvar é um extra: se o banco falhar, a pessoa recebe a resposta mesmo assim.
     resultado["salvo"] = False
@@ -168,7 +204,7 @@ def perguntar(dados: Annotated[Pergunta, Body(openapi_examples=EXEMPLOS_PERGUNTA
         try:
             if not chat_id:
                 chat_id = db.criar_chat(pergunta)["id"]
-            db.salvar_mensagem(chat_id, pergunta, resultado, interpretada if interpretada != pergunta else None)
+            db.salvar_mensagem(chat_id, pergunta, resultado, interpretada if interpretada != pergunta else None, bool(guardada))
             resultado["salvo"] = True
         except db.ErroBanco as erro:
             print(f"Falha ao salvar no histórico: {erro}", flush=True)
@@ -218,6 +254,14 @@ def apagar_chat(chat_id: UUID):
 @app.post("/api/registros", status_code=201)
 def registrar(dados: Registro):
     """Registra uma lacuna ou um erro para a gestão revisar."""
+    if dados.tipo == "erro" and db.configurado():
+        # Uma resposta com erro informado não deve ser reaproveitada.
+        modelo = os.environ.get("GEMINI_MODEL", MODELO_PADRAO)
+        versao = versao_contexto(carregar_prompt(), montar_wiki())
+        try:
+            db.apagar_cache(chave_cache(dados.pergunta_interpretada or dados.pergunta, versao, modelo))
+        except db.ErroBanco as erro:
+            print(f"Falha ao tirar do cache: {erro}", flush=True)
     item = {
         "tipo": dados.tipo,
         "pergunta": dados.pergunta.strip(),

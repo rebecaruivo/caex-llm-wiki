@@ -6,6 +6,7 @@ e só a API chama estas funções. O navegador nunca fala direto com o banco.
 """
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,7 +31,7 @@ def _id(chat_id):
     return str(UUID(str(chat_id)))
 
 
-def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False):
+def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None, contar=False):
     """Faz uma chamada à API REST do Supabase e devolve o JSON da resposta."""
     base = os.environ.get("SUPABASE_URL", "").rstrip("/").removesuffix("/rest/v1")
     chave = os.environ.get("SUPABASE_SECRET_KEY", "")
@@ -45,15 +46,27 @@ def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False):
     if not chave.startswith("sb_"):
         # A chave antiga (service_role) é um token JWT e vai também neste cabeçalho.
         cabecalhos["Authorization"] = f"Bearer {chave}"
+    preferencias = []
     if devolver:
         # Pede ao Supabase para devolver as linhas criadas ou apagadas.
-        cabecalhos["Prefer"] = "return=representation"
+        preferencias.append("return=representation")
+    if prefer:
+        preferencias.append(prefer)
+    if contar:
+        # Pede o total de linhas no cabeçalho Content-Range, sem trazer os dados.
+        preferencias.append("count=exact")
+        cabecalhos["Range"] = "0-0"
+    if preferencias:
+        cabecalhos["Prefer"] = ",".join(preferencias)
 
     dados = json.dumps(corpo, ensure_ascii=False).encode("utf-8") if corpo is not None else None
     pedido = urllib.request.Request(url, data=dados, headers=cabecalhos, method=metodo)
     try:
         with urllib.request.urlopen(pedido, timeout=10) as resposta:
             texto = resposta.read().decode("utf-8")
+            if contar:
+                # Formato: "0-0/123" (ou "*/0" quando não há linhas).
+                return int(resposta.headers.get("Content-Range", "*/0").split("/")[-1])
     except urllib.error.HTTPError as erro:
         detalhe = erro.read().decode("utf-8", "replace")[:300]
         if '"23503"' in detalhe:
@@ -93,7 +106,7 @@ def abrir_chat(chat_id):
     """Devolve um chat com todas as mensagens, em ordem."""
     linhas = _pedir("GET", "chats", {
         "id": f"eq.{_id(chat_id)}",
-        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,pergunta_interpretada,resposta,fontes,citacoes_invalidas,criado_em)",
+        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,pergunta_interpretada,resposta,fontes,citacoes_invalidas,do_cache,criado_em)",
         "mensagens.order": "criado_em.asc",
     })
     if not linhas:
@@ -101,7 +114,7 @@ def abrir_chat(chat_id):
     return linhas[0]
 
 
-def salvar_mensagem(chat_id, pergunta, resultado, pergunta_interpretada=None):
+def salvar_mensagem(chat_id, pergunta, resultado, pergunta_interpretada=None, do_cache=False):
     """Guarda uma pergunta e a resposta do oráculo dentro de um chat.
 
     pergunta_interpretada: a versão completa que o oráculo respondeu, quando
@@ -114,6 +127,7 @@ def salvar_mensagem(chat_id, pergunta, resultado, pergunta_interpretada=None):
         "resposta": resultado["resposta"],
         "fontes": resultado["fontes"],
         "citacoes_invalidas": resultado["citacoes_invalidas"],
+        "do_cache": do_cache,
     }, devolver=True)[0]
 
 
@@ -122,3 +136,40 @@ def apagar_chat(chat_id):
     apagados = _pedir("DELETE", "chats", {"id": f"eq.{_id(chat_id)}"}, devolver=True)
     if not apagados:
         raise ChatNaoEncontrado("Chat não encontrado.")
+
+
+def _chave_valida(chave):
+    """A chave do cache é um hash SHA-256: 64 caracteres hexadecimais."""
+    if not re.fullmatch(r"[0-9a-f]{64}", chave):
+        raise ValueError("Chave de cache inválida.")
+    return chave
+
+
+def buscar_cache(chave):
+    """Devolve a resposta guardada para esta chave, ou None."""
+    linhas = _pedir("GET", "respostas_cache", {"chave": f"eq.{_chave_valida(chave)}", "select": "resposta,fontes", "limit": "1"})
+    return linhas[0] if linhas else None
+
+
+def guardar_cache(chave, pergunta, versao, modelo, resultado):
+    """Guarda uma resposta. Se duas pessoas guardarem ao mesmo tempo, a primeira fica."""
+    _pedir("POST", "respostas_cache", {"on_conflict": "chave"}, corpo={
+        "chave": _chave_valida(chave),
+        "pergunta": pergunta,
+        "versao": versao,
+        "modelo": modelo,
+        "resposta": resultado["resposta"],
+        "fontes": resultado["fontes"],
+    }, prefer="resolution=ignore-duplicates")
+
+
+def apagar_cache(chave):
+    """Tira uma resposta do cache, por exemplo depois de "Informar erro"."""
+    _pedir("DELETE", "respostas_cache", {"chave": f"eq.{_chave_valida(chave)}"})
+
+
+def metricas():
+    """Quantas perguntas foram feitas e quantas vieram do cache."""
+    total = _pedir("GET", "mensagens", {"select": "id"}, contar=True)
+    reaproveitadas = _pedir("GET", "mensagens", {"select": "id", "do_cache": "eq.true"}, contar=True)
+    return {"perguntas": total, "reaproveitadas": reaproveitadas}
