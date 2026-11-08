@@ -2,3 +2,7 @@
 __pycache__/
 .venv/
 registros.jsonl
+.cursor/skills/
+.agents/
+.claude/
+skills-lock.json
