@@ -43,3 +43,17 @@ Todo item entre as seções 2 e 3 precisa de citação.
 - **Ingest:** registre a fonte, leia tudo, atualize páginas, `index.md`, `log.md` e `pendencias.md`, depois rode o lint.
 - **Query:** leia `wiki/index.md`, abra só o necessário, responda com fontes e diferencie regra, decisão, prática e lacuna.
 - **Lint:** procure afirmações sem fonte, dados pessoais, páginas órfãs, contradições e informações vencidas.
+
+## Agent skills
+
+### Issue tracker
+
+Issues e specs vivem nas GitHub Issues de `rebecaruivo/caex-llm-wiki`, via CLI `gh`. Veja `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Cinco rótulos canônicos padrão: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. Veja `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Layout single-context: `GLOSSARY.md` na raiz e ADRs em `docs/adr/`. Veja `docs/agents/domain.md`.
