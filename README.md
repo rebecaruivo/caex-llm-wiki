@@ -65,14 +65,52 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 | `prompts/` | Prompts do compilador e do oráculo |
 | `wiki/` | Conhecimento compilado |
 | `evals/` | 12 testes com critérios de avaliação |
+| `config_ingestao.py` | Constantes e switches da ingestão |
+| `ingerir.py` | Núcleo do compilador (hash, source_id, contrato JSON) |
+| `tests/` | Suíte determinística com `unittest`, sem rede |
 | `tools/lint_wiki.py` | Validador automático |
+| `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
 
 ## Como usar
 ```bash
 python3 tools/lint_wiki.py
 ```
 
-No Windows, use `python tools/lint_wiki.py`. O projeto usa apenas a biblioteca padrão do Python.
+No Windows, use `python tools/lint_wiki.py`. Os testes usam só a biblioteca padrão do Python.
+
+## Ingestão local (fatia vertical)
+O comando compila uma fonte local sobre uma **cópia temporária** do repositório,
+aplica apenas operações `adicionar_linha`, roda o lint e mostra o diff. O
+repositório original não é alterado.
+
+```bash
+python3 tools/compilar_local.py \
+  --tipo ata --titulo "Ata de 10/04" --data 2030-04-10 \
+  --texto "A assembleia aprovou o novo calendário."
+```
+
+Também aceita `--fonte arquivo.json` (com `tipo`, `titulo`, `data`, `texto`),
+`--texto-arquivo`, `--wiki` (raiz alternativa) e `--modelo`. Use `--help` para
+ver tudo. Códigos de saída: `0` sem erros de lint, `1` com erros de lint e `2`
+para fonte, modelo ou operação inválida.
+
+Variáveis de ambiente:
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `GEMINI_API_KEY_INGEST` | — | Chave do worker (cai para `GEMINI_API_KEY`) |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Modelo do oráculo |
+| `INGEST_ABERTO` | `false` | Só `true` abre o formulário |
+| `INGEST_MAX_DIA` | `20` | Limite global diário |
+| `INGEST_MAX_POR_IP` | `3` | Limite diário por IP |
+
+Contrato mínimo: o modelo recebe a wiki com linhas numeradas e hash
+(`L1 [hash=9f13] ...`) e responde em JSON com `fatos_novos`, `mudancas`,
+`contradicoes`, `lacunas` e `operacoes`. Nesta fatia, cada operação aceita é
+`{"tipo": "adicionar_linha", "pagina": "wiki/...", "secao": "...",
+"texto": "... [fonte: ID]"}`; qualquer outro tipo é recusado. A citação precisa
+existir e apontar para um ID conhecido do manifesto. Se a operação informar
+`linha` e `hash`, o hash precisa bater com a linha atual.
 
 Para testar o oráculo em um agente, peça:
 
