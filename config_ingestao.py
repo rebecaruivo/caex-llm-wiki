@@ -62,13 +62,20 @@ PII_REGEX = {
     "email": r"[\w.+-]+@[\w.-]+\.\w+",
 }
 
-# Pré-filtro de injeção óbvia (lista de regexes). O classificador cobre o resto.
+# Pré-filtro de injeção óbvia (lista de regexes), conforme spec §7.2.
+# Os padrões só casam frases dirigidas à IA; palavras isoladas como
+# `ignorar`, `regra` ou `instrução` não disparam quarentena.
 PREFILTRO = (
-    r"ignore\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)\s+anteriores",
-    r"desconsidere\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)",
-    r"ignora\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)",
-    r"revele\s+o\s+prompt",
-    r"system\s*prompt",
+    r"ignore\s+(?:(?:all|any|the)\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts)",
+    r"ignore\s+(?:as|todas\s+as)\s+(?:instru[cç][oõ]es|regras|ordens)\s+(?:anteriores|acima)",
+    r"desconsidere\s+(?:as|todas\s+as)\s+(?:instru[cç][oõ]es|regras)",
+    r"voc[êe]\s+[ée]\s+um(?:a)?\s+(?:assistente|modelo|ia)\b",
+    r"you\s+are\s+(?:now\s+)?an?\s+(?:ai|assistant|model)\b",
+    r"(?:system|developer)\s+prompt",
+    r"prompt\s+do\s+sistema",
+    r"(?:reveal|show|print|repeat)\s+(?:your|the)\s+(?:system\s+prompt|instructions)",
+    r"(?:mostre|revele|imprima|repita)\s+(?:o|as|suas)\s+(?:prompt|instru[cç][oõ]es)",
+    r"jailbreak|DAN\s+mode",
 )
 
 
