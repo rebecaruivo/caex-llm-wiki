@@ -129,11 +129,11 @@ class AplicarOperacoesTest(unittest.TestCase):
             ingerir.aplicar_operacoes(self.raiz, operacoes, {"ATA-2030-03-10"})
 
     def test_operacao_nao_suportada_e_recusada_com_erro_claro(self):
-        operacoes = [{"tipo": "marcar_substituida", "pagina": "wiki/processos/exemplo.md"}]
+        operacoes = [{"tipo": "apagar_linha", "pagina": "wiki/processos/exemplo.md"}]
         with self.assertRaises(ingerir.ErroOperacao) as erro:
             ingerir.aplicar_operacoes(self.raiz, operacoes, {"ATA-2030-03-10"})
-        self.assertIn("marcar_substituida", str(erro.exception))
-        self.assertIn("adicionar_linha", str(erro.exception))
+        self.assertIn("apagar_linha", str(erro.exception))
+        self.assertIn("não suportada", str(erro.exception))
 
     def test_hash_divergente_nao_aplica(self):
         linhas = self.pagina.read_text(encoding="utf-8").splitlines()
@@ -250,8 +250,9 @@ class CompilarTest(unittest.TestCase):
         self.assertIn("ATA-2030-04-10", (self.raiz / "wiki/processos/exemplo.md").read_text(encoding="utf-8"))
 
     def test_resposta_sem_json_vira_erro_claro(self):
-        with self.assertRaises(ingerir.ErroResposta):
+        with self.assertRaises(ingerir.ErroCompilacao) as erro:
             ingerir.compilar(fonte(), self.raiz, lambda prompt: "não é json")
+        self.assertEqual(erro.exception.motivo, "schema")
 
 
 if __name__ == "__main__":

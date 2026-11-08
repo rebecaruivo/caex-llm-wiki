@@ -81,8 +81,8 @@ No Windows, use `python tools/lint_wiki.py`. Os testes usam só a biblioteca pad
 
 ## Ingestão local (fatia vertical)
 O comando compila uma fonte local sobre uma **cópia temporária** do repositório,
-aplica apenas operações `adicionar_linha`, roda o lint e mostra o diff. O
-repositório original não é alterado.
+aplica as operações aceitas, roda o lint e mostra o diff. O repositório
+original não é alterado.
 
 ```bash
 python3 tools/compilar_local.py \
@@ -107,11 +107,36 @@ Variáveis de ambiente:
 
 Contrato mínimo: o modelo recebe a wiki com linhas numeradas e hash
 (`L1 [hash=9f13] ...`) e responde em JSON com `fatos_novos`, `mudancas`,
-`contradicoes`, `lacunas` e `operacoes`. Nesta fatia, cada operação aceita é
-`{"tipo": "adicionar_linha", "pagina": "wiki/...", "secao": "...",
-"texto": "... [fonte: ID]"}`; qualquer outro tipo é recusado. A citação precisa
-existir e apontar para um ID conhecido do manifesto. Se a operação informar
-`linha` e `hash`, o hash precisa bater com a linha atual.
+`contradicoes`, `lacunas` e `operacoes`. As operações aceitas são:
+
+- `adicionar_linha` — insere uma linha citada; com `linha` e `hash`, o hash
+  precisa bater com a linha atual.
+- `marcar_substituida` — exige autoridade igual ou maior que a maior
+  autoridade citada na linha e data estritamente maior que a maior data
+  citada. Só acrescenta `(substituída por [fonte: ID] em DATA)` ao fim da
+  linha; nunca apaga a linha antiga.
+- `atualizar_resumo` — só vale junto de um `marcar_substituida` válido para a
+  mesma página na mesma proposta.
+- `criar_pagina` — só em `wiki/processos/*.md` (`tipo: processo`) ou
+  `wiki/decisoes/*.md` (`tipo: decisao`); `relato` e outros caminhos são
+  recusados. O código monta as cinco seções obrigatórias (com
+  `## Passo a passo` em processos), deriva `fontes` das citações do corpo e
+  grava `confianca: baixa`, `status: rascunho` e validação nula.
+
+Toda linha adicionada entre `## O que as fontes dizem` e `## O que ainda não
+sabemos`, incluindo `## Passo a passo`, precisa de citação válida. Fonte
+`nao-confiavel` nunca sustenta afirmação, e autoridade menor não altera linha
+que cita autoridade maior. Cada contradição vira uma linha `P-xx` em
+`wiki/pendencias.md` citando a fonte. O código — nunca o modelo — escreve
+`index.md`, `log.md` e `pendencias.md`; `contatos.md` é só da gestão e vira
+pendência. Páginas tocadas voltam a `status: rascunho`, com validação nula,
+confiança mantida e `atualizado_em = max(atual, data_documento)`.
+
+A proposta é atômica: se qualquer operação for recusada, nada é gravado. Nomes
+de pessoas em texto gerado bloqueiam a proposta (comparação sem caixa e por
+palavra inteira). O compilador tenta até 3 vezes, devolvendo ao modelo a lista
+exata de erros; depois disso falha com motivo `lint`, `schema`, `pii` ou
+`compilacao`. A aplicação roda o lint na cópia antes de aceitar a proposta.
 
 ## Triagem e quarentena
 Antes do compilador, cada fonte passa por uma triagem determinística:
