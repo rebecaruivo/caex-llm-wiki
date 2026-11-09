@@ -428,3 +428,70 @@ def consumir_status(chave, dia, limite, expira_em):
         "p_limite": int(limite),
         "p_expira_em": expira_em,
     }))
+
+
+def buscar_job_por_branch(branch):
+    """O job cujo PR usa este branch, ou None."""
+    linhas = _pedir("GET", "ingest_jobs", {
+        "branch": f"eq.{branch}",
+        "select": "*",
+        "order": "criado_em.desc",
+        "limit": "1",
+    })
+    return linhas[0] if linhas else None
+
+
+def estado_fila():
+    """A linha única do lock da fila, ou None."""
+    linhas = _pedir("GET", "ingest_estado", {"id": "eq.1", "select": "*", "limit": "1"})
+    return linhas[0] if linhas else None
+
+
+def atualizar_estado_fila(campos):
+    """Atualiza a linha única do lock e devolve a linha nova."""
+    linhas = _pedir("PATCH", "ingest_estado", {"id": "eq.1"}, corpo=campos, devolver=True)
+    return linhas[0] if linhas else None
+
+
+def listar_jobs_expirados(agora_iso):
+    """Jobs cujo TTL do original já venceu."""
+    return _pedir("GET", "ingest_jobs", {
+        "expira_em": f"lt.{agora_iso}",
+        "select": "id,source_id,status,hash_conteudo,conteudo_bruto,nomes_detectados,expira_em",
+    }) or []
+
+
+def limpar_conteudo_job(job_id):
+    """Apaga o original e os nomes de um job, mantendo a linha."""
+    _pedir("PATCH", "ingest_jobs", {"id": f"eq.{_id(job_id)}"}, corpo={
+        "conteudo_bruto": None,
+        "nomes_detectados": None,
+    })
+
+
+def limpar_limites_expirados(agora_iso):
+    """Apaga as linhas de limite cujo prazo já passou."""
+    _pedir("DELETE", "limites_ingest", {"expira_em": f"lt.{agora_iso}"})
+
+
+def listar_jobs_terminais_antigos(limite_iso, statuss):
+    """Jobs em estado terminal parados desde antes de `limite_iso`."""
+    return _pedir("GET", "ingest_jobs", {
+        "status": _filtro_status(statuss),
+        "atualizado_em": f"lt.{limite_iso}",
+        "select": "id,source_id,status",
+    }) or []
+
+
+def apagar_job_ingest(job_id):
+    """Apaga o job; os eventos caem junto por `on delete cascade`."""
+    _pedir("DELETE", "ingest_jobs", {"id": f"eq.{_id(job_id)}"})
+
+
+def listar_processando_parados(limite_iso):
+    """Jobs `processando` sem atualização desde antes de `limite_iso`."""
+    return _pedir("GET", "ingest_jobs", {
+        "status": "eq.processando",
+        "atualizado_em": f"lt.{limite_iso}",
+        "select": "id,source_id,status,hash_conteudo,atualizado_em",
+    }) or []
