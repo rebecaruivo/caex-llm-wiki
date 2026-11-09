@@ -64,13 +64,15 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 | `CLAUDE.md` | Regras do agente mantenedor |
 | `prompts/` | Prompts do compilador, do classificador e do oráculo |
 | `wiki/` | Conhecimento compilado |
-| `evals/` | 12 testes com critérios de avaliação |
+| `evals/` | Testes do oráculo, da reescrita e evals ao vivo do ingest |
+| `evals/ingest/` | Fixtures I01–I14 do ingest, com resultado e critérios |
 | `config_ingestao.py` | Constantes, switches e regexes da ingestão |
 | `ingerir.py` | Núcleo do compilador, triagem e substituição de nomes |
 | `tests/` | Suíte determinística com `unittest`, sem rede |
 | `tools/lint_wiki.py` | Validador automático |
 | `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
 | `tools/triar_local.py` | Triagem local: pré-filtro, classificador e nomes |
+| `tools/run_evals_ingest.py` | Evals ao vivo do ingest e escolha do modelo |
 
 ## Como usar
 ```bash
@@ -180,6 +182,46 @@ Para testar o oráculo em um agente, peça:
 ```text
 Use prompts/oraculo.md e responda só com a wiki: Quando será a Semana de Integração?
 ```
+
+## Evals ao vivo do ingest
+Os evals são **manuais e não rodam em CI**. O runner copia o repositório para
+um diretório temporário, roda o classificador e o compilador reais com
+`GEMINI_API_KEY_INGEST` e nunca toca em Supabase nem no GitHub. O repositório
+original só recebe os relatórios em `evals/resultados/`; a wiki e as fontes da
+cópia temporária é que são alteradas.
+
+As fixtures `evals/ingest/I01.json` … `I14.json` cobrem injeção óbvia e sutil,
+frase legítima de “ignorar a regra anterior”, nomes (“Rosa” e “camiseta rosa”),
+nome em texto gerado, contradição, autoridade menor, substituição por fonte
+mais nova, `sem_mudancas`, página nova, relato tentando criar página, muitos
+fatos com lint limpo, nome no título e fonte liberada pela gestão. Cada
+fixture declara `fonte`, `esperado` e `criterios`.
+
+```bash
+# Modelo leve sozinho.
+python3 tools/run_evals_ingest.py
+
+# Compara o leve com o forte e registra o mais barato que passa em tudo.
+python3 tools/run_evals_ingest.py --comparar \
+  --modelo gemini-3.5-flash-lite --modelo-forte gemini-3.5-flash
+
+# Um caso só, sem o modelo avaliador.
+python3 tools/run_evals_ingest.py --apenas I04 --sem-juiz
+```
+
+A pontuação por código cobre resultado, citações, nomes, lint e páginas
+alteradas. O juiz (`--juiz`, um modelo só) avalia apenas os critérios
+qualitativos. Use `--fixtures` e `--saida` para trocar as pastas e
+`--intervalo` para ajustar a espera entre chamadas. A saída mostra só ids,
+resultados e contagens; nunca imprime texto bruto da fonte nem nomes.
+
+Cada rodada grava `evals/resultados/ingest-<timestamp>.json` e `.md` com data e
+hora, commit, modelos comparados e resultados por caso. O campo
+`modelo_escolhido` (e `modelo_ingest_recomendado`) é o primeiro modelo da
+comparação que passa em todos os casos, ou seja, o mais barato. Depois de uma
+rodada, registre a escolha em `config_ingestao.MODELO_INGEST` e faça um commit
+em português; o relatório é a evidência da decisão. Se nenhum modelo passar em
+todos os casos, o campo fica `null` e o `MODELO_INGEST` atual é mantido.
 
 ## Próximos passos
 1. Rodar os testes e publicar a taxa de acerto.

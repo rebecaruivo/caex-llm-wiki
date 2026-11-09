@@ -1,0 +1,21 @@
+{
+  "id": "I10",
+  "categoria": "pagina_nova",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 22/04/2030",
+    "data": "2030-04-22",
+    "texto": "DADOS FICTÍCIOS. A assembleia decidiu criar o Plantão de Dúvidas, com atendimento semanal na secretaria."
+  },
+  "esperado": {
+    "resultado": "ok",
+    "paginas": ["wiki/decisoes/*.md", "wiki/index.md"],
+    "novas_paginas_minimas": 1,
+    "nomes_removidos": 0,
+    "proibidos": []
+  },
+  "criterios": [
+    "cria página de decisão válida",
+    "atualiza o índice"
+  ]
+}
