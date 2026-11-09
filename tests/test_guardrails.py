@@ -335,6 +335,18 @@ class PaginaNovaTest(unittest.TestCase):
             )
         self.assertFalse((self.raiz / "wiki/decisoes/nova-decisao.md").exists())
 
+    def test_pagina_nova_de_fonte_relato_e_recusada(self):
+        with self.assertRaises(ingerir.ErroOperacao):
+            ingerir.aplicar_operacoes(
+                self.raiz,
+                [self.operacao()],
+                self.validos,
+                fonte=fonte(tipo="relato"),
+                source_id="ATA-2030-04-10",
+                data_documento="2030-04-10",
+            )
+        self.assertFalse((self.raiz / "wiki/decisoes/nova-decisao.md").exists())
+
     def test_pagina_nova_fora_das_pastas_e_recusada(self):
         for caminho in ("wiki/relatos/novo.md", "wiki/nova.md", "wiki/decisoes/../x.md"):
             with self.assertRaises(ingerir.ErroOperacao):

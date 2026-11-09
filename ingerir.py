@@ -993,6 +993,9 @@ def aplicar_operacoes(
         manifesto = carregar_manifesto(raiz)
     mapa = {item["id"]: item for item in manifesto.get("fontes", [])}
     nomes = list(nomes or [])
+    tipo_origem = (fonte or {}).get("tipo")
+    if tipo_origem is None and source_id in mapa:
+        tipo_origem = mapa[source_id].get("tipo")
     data_documento = data_documento or (fonte or {}).get("data")
     if data_documento is None and source_id and source_id in mapa:
         data_documento = mapa[source_id].get("data")
@@ -1057,6 +1060,8 @@ def aplicar_operacoes(
             continue
 
         if tipo == "criar_pagina":
+            if tipo_origem == "relato":
+                raise ErroOperacao("fonte relato não pode criar página")
             caminho_relativo, alvo = _caminho_novo(raiz, operacao.get("caminho"))
             pasta = Path(caminho_relativo).parts[1]
             if operacao.get("tipo_pagina") != PASTAS_POR_TIPO_PAGINA[pasta]:
