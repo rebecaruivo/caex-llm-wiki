@@ -144,8 +144,25 @@ O envio chama `POST /api/enviar` e mostra o `detail` exato da API para
 `503` (fechado), `422` (PII ou campo inválido), `409` (duplicata), `429`
 (limite por IP ou global) e `403` (Turnstile). No sucesso, exibe “Fonte
 recebida.” e um link compartilhável para `/enviar/<uuid>`; o UUID é a
-capacidade de acompanhamento. O widget e as chaves do Turnstile ficam no
-ticket #9.
+capacidade de acompanhamento.
+
+### Turnstile e abertura segura
+
+Com `aberto: true` e `turnstile_site_key` presente, a página renderiza o
+widget invisível do Turnstile; o script da Cloudflare é injetado sob demanda
+e o token vai em `turnstile_token`. A página fechada não carrega o script,
+não cria o widget e não mostra o formulário. Falha na verificação devolve
+`403` com “Não foi possível verificar o navegador. Tente novamente.”.
+
+O envio só abre com `INGEST_ABERTO=true` **e** as duas chaves
+(`TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY`). Sem qualquer uma delas a API
+responde `503` com “O envio está fechado para testes.”. Para abrir com
+segurança, configure as chaves na Vercel, use as chaves de teste da Cloudflare
+no ambiente local, confira `GET /api/enviar/config` e deixe
+`INGEST_ABERTO=true` só durante a janela de envio. Para fechar, volte o
+switch para `false` (ou remova uma chave) e reimplante. A ordem da API é
+mantida: abertura/chaves, validação, limite por IP, Turnstile, PII, duplicata
+e limite global; o limite por IP é consumido antes do Turnstile.
 
 A página de andamento consulta `GET /api/ingest/{uuid}` a cada 5 s em
 `processando` e a cada 15 s em `na_fila`/`aguardando_revisao`, parando em

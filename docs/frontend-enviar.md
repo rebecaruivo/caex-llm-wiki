@@ -18,8 +18,30 @@ mostra o formulário em `/enviar` e o andamento em `/enviar/<uuid>`.
 
 `GET /api/enviar/config` decide o estado da página. Com `aberto: false`, a
 página mostra “Envio fechado para testes.” e mantém o formulário escondido.
-Com `aberto: true`, o formulário aparece. O widget e as chaves do Turnstile
-ficam para o ticket #9; a página envia `turnstile_token` vazio até lá.
+Com `aberto: true`, o formulário aparece e a página renderiza o widget
+invisível do Turnstile usando `turnstile_site_key`.
+
+## Turnstile e abertura segura
+
+- O widget é invisível (`size: "invisible"`) e só é criado depois que
+  `/api/enviar/config` confirma `aberto: true` com uma site key não vazia.
+  O script da Cloudflare é injetado sob demanda; a página fechada não carrega
+  o script, não cria o widget e não mostra o formulário.
+- No envio, a página executa o widget, recebe o token e o envia em
+  `turnstile_token`. Se a verificação falhar, a API responde `403` com
+  “Não foi possível verificar o navegador. Tente novamente.” e o widget é
+  reiniciado para a próxima tentativa.
+- O servidor só abre o envio com `INGEST_ABERTO=true` e as duas chaves
+  presentes (`TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY`). Sem qualquer uma
+  delas, `/api/enviar` responde `503` com “O envio está fechado para testes.”.
+- Para abrir com segurança: configure as duas chaves na Vercel, use as chaves
+  de teste da Cloudflare no ambiente local, deixe `INGEST_ABERTO=true` apenas
+  durante a janela de envio e confira `GET /api/enviar/config` antes de
+  divulgar o formulário. Para fechar, volte `INGEST_ABERTO=false` (ou remova
+  uma das chaves) e reimplante.
+- A ordem da API é preservada: abertura/chaves (`503`), validação (`422`),
+  limite por IP (`429`), Turnstile (`403`) e só então PII, duplicata e limite
+  global. O limite por IP é consumido antes da verificação do Turnstile.
 
 No sucesso (`201`), o formulário some e a página mostra “Fonte recebida.” com
 um link para `/enviar/<uuid>`. O link é compartilhável e o UUID funciona como
@@ -90,8 +112,11 @@ Com `python3 -m uvicorn app:app --reload`, abra as páginas e confira:
 
 - [ ] `/enviar` com `INGEST_ABERTO=false`: mostra apenas “Envio fechado para
   testes.” e nenhum campo.
-- [ ] `/enviar` com `INGEST_ABERTO=true`: mostra nav, título, introdução, os
-  quatro passos, todos os campos, consentimento, botão e dica de PII.
+- [ ] `/enviar` com `INGEST_ABERTO=true` e as duas chaves preenchidas: mostra
+  nav, título, introdução, os quatro passos, todos os campos, consentimento,
+  botão e dica de PII, e renderiza o widget invisível do Turnstile.
+- [ ] `/enviar` com `INGEST_ABERTO=true` sem uma das chaves: a API responde
+  `503` e a página não libera o envio.
 - [ ] Sem consentimento ou com campo vazio: o navegador aponta o campo e nada
   é enviado.
 - [ ] Arquivo `.md` pequeno: o texto aparece na área de texto e a mensagem
