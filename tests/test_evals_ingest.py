@@ -602,6 +602,8 @@ class RelatorioTest(unittest.TestCase):
                     "resultados": [resultado],
                 }
             ],
+            "comparacao": True,
+            "decisao": "usar leve (mais barato que passou em todos os casos)",
             "modelo_escolhido": "leve",
             "modelo_ingest_recomendado": "leve",
         }
@@ -625,6 +627,8 @@ class RelatorioTest(unittest.TestCase):
             runner.escrever_json(caminho, self.dados())
             dados = json.loads(caminho.read_text(encoding="utf-8"))
         self.assertEqual(dados["commit"], "abc1234")
+        self.assertTrue(dados["comparacao"])
+        self.assertIn("leve", dados["decisao"])
         self.assertEqual(dados["modelo_escolhido"], "leve")
         self.assertEqual(dados["modelos"][0]["resultados"][0]["id"], "I13")
 

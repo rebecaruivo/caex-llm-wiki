@@ -4,6 +4,7 @@ Os valores vêm da especificação (`docs/especificacao-ingest.md`, §11.3) e s�
 lidos uma vez na importação. Segredos nunca ficam aqui: só nomes de variáveis.
 """
 import os
+from dataclasses import dataclass
 
 # Limites de entrada.
 MAX_BYTES = 51200
@@ -22,6 +23,30 @@ FUSO = "America/Sao_Paulo"
 
 # Tipos aceitos no formulário e seu mapeamento para o manifesto.
 TIPOS = ("ata", "guia", "outro")
+
+# Origem de uma fonte submetida. `registro` fica reservado ao chat futuro.
+ORIGENS = ("web", "registro")
+
+
+@dataclass(frozen=True)
+class FonteSubmetida:
+    """Interface compartilhada entre o formulário web e o chat futuro.
+
+    A promoção de registros do chat não existe nesta versão; apenas o contrato
+    e o campo `origem` ficam prontos. `origem` inválida é rejeitada.
+    """
+
+    tipo: str
+    titulo: str
+    data_documento: str
+    texto: str
+    origem: str = "web"
+
+    def __post_init__(self):
+        if self.origem not in ORIGENS:
+            raise ValueError(
+                f"origem inválida: {self.origem!r}; use uma de {', '.join(ORIGENS)}"
+            )
 AUTORIDADE_POR_TIPO = {
     "ata": "ca-deliberativa",
     "guia": "ca-operacional",

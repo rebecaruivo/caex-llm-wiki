@@ -20,6 +20,7 @@ class FakeDB:
         self.eventos = []
         self.buscas = 0
         self.pr_aberto = []
+        self.duplicata_proxima = []
 
     def configurado(self):
         return True
@@ -56,6 +57,9 @@ class FakeDB:
 
     def listar_source_ids_ingest(self):
         return [job["source_id"] for job in self.jobs]
+
+    def buscar_jobs_duplicata_proxima(self, tipo, data_documento, titulo, hash_):
+        return list(self.duplicata_proxima)
 
 
 def criar_job(**campos):
@@ -208,6 +212,27 @@ class TransicoesWorkerTest(BaseWorker):
             self.assertEqual(self.fake.pr_aberto[0]["pr_numero"], 12)
             self.assertEqual(self.payloads[-1]["evento"], "pr_aberto")
             self.assertNotIn(job["id"], json.dumps(self.payloads))
+
+    def test_duplicata_proxima_marca_label_no_pr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = criar_repo(tmp)
+            job = criar_job()
+            self.fake.jobs = [job]
+            self.fake.estado["job_id"] = job["id"]
+            self.fake.duplicata_proxima = [{
+                "id": str(uuid4()),
+                "source_id": "ATA-2030-04-10-OUTRA1",
+                "tipo": job["tipo"],
+                "data_documento": job["data_documento"],
+                "titulo": job["titulo"],
+                "hash_conteudo": "b" * 64,
+            }]
+            git = lambda argumentos, raiz: ""
+            gh = lambda argumentos, raiz: "https://github.com/exemplo/repo/pull/12\n"
+
+            resultado = self.executar(job["id"], raiz=raiz, git=git, gh=gh)
+
+            self.assertIn("possivel-duplicata", resultado["pr"]["labels"])
 
     def test_sem_mudancas_libera_lock_sem_pr(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -106,10 +106,14 @@ a ser criados. Duplicatas bloqueantes são `na_fila`, `processando`,
 `aguardando_revisao`, `publicado`, `sem_mudancas` e `quarentena` (também no
 `ingest_hashes` e no manifesto quando a fonte veio de envio). `falhou`,
 `expirado` e `fechado_sem_merge` permitem reenvio; o índice único parcial de
-hash resolve a corrida.
+hash resolve a corrida. Mesmo tipo, data e título com texto diferente é
+permitido, mas o PR recebe o rótulo `possivel-duplicata` e um item extra no
+checklist da gestão.
 
 `GET /api/enviar/config` devolve `aberto`, `turnstile_site_key`, `max_bytes`
-e os tipos com rótulos em português (`Ata`, `Guia`, `Relato`). O
+e os tipos com rótulos em português (`Ata`, `Guia`, `Relato`). `aberto` só é
+`true` quando `INGEST_ABERTO=true` **e** as duas chaves do Turnstile existem,
+ou seja, quando o formulário realmente aceita envios. O
 `GET /api/ingest/{uuid}` valida o UUID antes de consultar, limita a 60
 consultas por minuto por IP, expõe só campos públicos (`id`, `source_id`,
 `status`, `motivo`, `etapa`, `posicao_fila`, `pr_url`, `mensagem`,
@@ -127,8 +131,9 @@ de erro inclui o token, o UUID ou o texto da fonte.
 Crie as tabelas do ingest com `supabase/ingest.sql` (separado de
 `supabase/schema.sql`). Todas têm RLS ligada e nenhuma policy pública; só a
 chave secreta usada pela API acessa os dados. As RPCs são `tomar_lock_fila`,
-`liberar_lock_fila`, `marcar_pr_aberto`, `consumir_limite`, `consumir_ip` e
-`consumir_global`.
+`liberar_lock_fila`, `marcar_pr_aberto`, `consumir_limite`, `consumir_ip`,
+`consumir_global` e `devolver_global`; a última compensa o limite global
+quando o job não chega a ser criado (falha ou corrida de duplicata).
 
 ## Formulário de envio (`/enviar`)
 
@@ -320,7 +325,10 @@ hora, commit, modelos comparados e resultados por caso. O campo
 comparação que passa em todos os casos, ou seja, o mais barato. Depois de uma
 rodada, registre a escolha em `config_ingestao.MODELO_INGEST` e faça um commit
 em português; o relatório é a evidência da decisão. Se nenhum modelo passar em
-todos os casos, o campo fica `null` e o `MODELO_INGEST` atual é mantido.
+todos os casos, o campo fica `null` e o `MODELO_INGEST` atual é mantido. O
+relatório também grava `comparacao` e `decisao` explicitamente. Enquanto não
+houver uma rodada ao vivo com `GEMINI_API_KEY_INGEST`, não há evidência de
+comparação: veja `docs/modelo-ingest.md`.
 
 ## Publicação e PR
 O `tools/ingerir.py` é o caminho completo de publicação, reutilizável pelo

@@ -201,6 +201,10 @@ class PassosManutencaoTest(BaseManutencao):
         self.assertIsNone(aguardando["conteudo_bruto"])
         self.assertIsNone(aguardando["nomes_detectados"])
         self.assertIn("expirado", [evento["evento"] for evento in self.fake.eventos])
+        self.assertEqual(
+            self.fake.hashes[na_fila["hash_conteudo"]]["resultado"], "expirado"
+        )
+        self.assertNotIn(aguardando["hash_conteudo"], self.fake.hashes)
 
     def test_passo1_idempotente_nao_repete_evento(self):
         na_fila = job()

@@ -45,6 +45,7 @@ class TestMigracaoIngest(unittest.TestCase):
             "consumir_limite",
             "consumir_ip",
             "consumir_global",
+            "devolver_global",
         ):
             with self.subTest(funcao=funcao):
                 self.assertIn(f"function {funcao}", self.texto)

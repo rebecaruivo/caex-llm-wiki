@@ -134,6 +134,18 @@ class FakeDB:
     def registrar_evento_ingest(self, job_id, evento, detalhe=None):
         self.eventos.append({"job_id": str(job_id), "evento": evento, "detalhe": detalhe or {}})
 
+    def guardar_hash_ingest(self, hash_, source_id, resultado):
+        self.hashes.append({
+            "hash_conteudo": hash_,
+            "source_id": source_id,
+            "resultado": resultado,
+        })
+
+    def devolver_global(self, chave, dia):
+        if self.limites.get(chave, 0) > 0:
+            self.limites[chave] -= 1
+        return self.limites.get(chave, 0)
+
 
 def texto_padrao():
     return "A assembleia aprovou o novo calendario e registrou a decisao."
@@ -212,6 +224,12 @@ class TestConfig(BaseEnvio):
     def test_config_fechado_quando_switch_desligado(self):
         with patch.object(config_ingestao, "INGEST_ABERTO", False):
             self.assertFalse(app.config_enviar()["aberto"])
+
+    def test_config_fechado_sem_uma_das_chaves_do_turnstile(self):
+        for chave in ("TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+            with self.subTest(chave=chave):
+                with patch.dict(os.environ, {chave: ""}):
+                    self.assertFalse(app.config_enviar()["aberto"])
 
 
 class TestEnvioValidacao(BaseEnvio):
@@ -361,6 +379,18 @@ class TestEnvioSucesso(BaseEnvio):
             self.enviar(dados_envio(texto=texto))
         self.assertEqual(erro.exception.status_code, 409)
         self.assertIn("ATA-2030-04-10-BBBBBB", erro.exception.detail)
+        self.assertEqual(self.fake.limites.get("global:2026-11-08", 0), 0)
+
+    def test_falha_ao_criar_job_devolve_limite_global(self):
+        def falhar(_dados):
+            raise db.ErroBanco("indisponível")
+
+        with patch.object(self.fake, "criar_job_ingest", falhar):
+            with self.assertRaises(app.HTTPException) as erro:
+                self.enviar()
+        self.assertEqual(erro.exception.status_code, 503)
+        self.assertEqual(self.fake.jobs, [])
+        self.assertEqual(self.fake.limites.get("global:2026-11-08", 0), 0)
 
 
 class TestDuplicatas(BaseEnvio):
@@ -522,6 +552,33 @@ class TestFila(BaseEnvio):
         self.assertEqual(self.fake.jobs[0]["falhas_dispatch"], config_ingestao.MAX_FALHAS_DISPATCH)
         self.assertIsNone(self.fake.lock)
 
+    def test_esgotar_dispatch_grava_hash_e_notifica(self):
+        job = {
+            "id": str(uuid4()),
+            "source_id": "ATA-2030-04-10-888888",
+            "status": "na_fila",
+            "motivo": None,
+            "hash_conteudo": "d" * 64,
+            "falhas_dispatch": 0,
+            "criado_em": "2026-11-08T11:00:00Z",
+        }
+        self.fake.jobs.append(job)
+        payloads = []
+
+        def falhar(_job_id):
+            raise RuntimeError("sem rede")
+
+        for _ in range(config_ingestao.MAX_FALHAS_DISPATCH):
+            app.talvez_avancar_fila(disparar=falhar, notificar=payloads.append)
+
+        self.assertEqual(job["status"], "falhou")
+        self.assertEqual(job["motivo"], "dispatch")
+        self.assertEqual(self.fake.hashes[-1]["hash_conteudo"], job["hash_conteudo"])
+        self.assertEqual(self.fake.hashes[-1]["resultado"], "falhou")
+        self.assertEqual(payloads[-1]["evento"], "falhou")
+        self.assertEqual(payloads[-1]["motivo"], "dispatch")
+        self.assertNotIn(job["id"], json.dumps(payloads))
+
     def test_dispatch_ok_registra_evento(self):
         job = {
             "id": str(uuid4()),
@@ -537,6 +594,35 @@ class TestFila(BaseEnvio):
 
     def test_fila_vazia(self):
         self.assertEqual(app.talvez_avancar_fila(), {"disparado": False, "motivo": "fila_vazia"})
+
+
+class FonteSubmetidaTest(unittest.TestCase):
+    def test_origem_padrao_e_web(self):
+        fonte = config_ingestao.FonteSubmetida(
+            tipo="ata", titulo="Ata", data_documento="2030-04-10", texto="texto"
+        )
+        self.assertEqual(fonte.origem, "web")
+        self.assertEqual(fonte.tipo, "ata")
+
+    def test_origem_registro_e_aceita(self):
+        fonte = config_ingestao.FonteSubmetida(
+            tipo="outro",
+            titulo="Relato",
+            data_documento="2030-04-10",
+            texto="texto",
+            origem="registro",
+        )
+        self.assertEqual(fonte.origem, "registro")
+
+    def test_origem_invalida_e_recusada(self):
+        with self.assertRaises(ValueError):
+            config_ingestao.FonteSubmetida(
+                tipo="ata",
+                titulo="Ata",
+                data_documento="2030-04-10",
+                texto="texto",
+                origem="chat",
+            )
 
 
 class FakeResposta:
