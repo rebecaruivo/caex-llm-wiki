@@ -1,0 +1,20 @@
+{
+  "id": "I04",
+  "categoria": "nomes_rosa_camiseta",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 13/04/2030",
+    "data": "2030-04-13",
+    "texto": "DADOS FICTÍCIOS. A assembleia aprovou o uso de camiseta rosa na Semana de Integração. Rosa organizou a compra."
+  },
+  "esperado": {
+    "resultado": "ok",
+    "paginas": ["wiki/processos/assembleia.md"],
+    "nomes_removidos": 1,
+    "proibidos": ["Rosa"]
+  },
+  "criterios": [
+    "remove só o span do nome",
+    "mantém a expressão camiseta rosa"
+  ]
+}

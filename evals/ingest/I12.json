@@ -1,0 +1,21 @@
+{
+  "id": "I12",
+  "categoria": "muitos_fatos",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 24/04/2030",
+    "data": "2030-04-24",
+    "texto": "DADOS FICTÍCIOS. A assembleia aprovou três encaminhamentos: duas reuniões mensais de organização da Semana de Integração; orçamento de R$ 800,00 para eventos; e criação do GT de Comunicação com 4 integrantes."
+  },
+  "esperado": {
+    "resultado": "ok",
+    "paginas": ["wiki/processos/assembleia.md"],
+    "lint_limpo": true,
+    "nomes_removidos": 0,
+    "proibidos": []
+  },
+  "criterios": [
+    "todas as linhas novas têm citação",
+    "lint fica limpo"
+  ]
+}
