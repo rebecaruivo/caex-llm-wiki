@@ -1,18 +1,20 @@
 """Núcleo puro do compilador e da triagem de ingestão.
 
 Aqui ficam normalização, hash, `source_id`, PII, contexto numerado, contrato
-JSON, aplicação de operações e a triagem (pré-filtro, classificador, nomes e
-quarentena). Publicação e guardrails completos chegam em outros tickets.
+JSON, aplicação de operações, a triagem (pré-filtro, classificador, nomes e
+quarentena) e a publicação (fonte derivada, manifesto, lint e PR). Os efeitos
+externos são injetáveis para os testes rodarem sem rede.
 """
 import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 import unicodedata
 import urllib.error
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from config_ingestao import (  # noqa: F401  (re-exportado para consumidores)
@@ -21,9 +23,11 @@ from config_ingestao import (  # noqa: F401  (re-exportado para consumidores)
     MAX_BYTES,
     MAX_TENTATIVAS,
     MODELO_INGEST,
+    PASTA_POR_TIPO,
     PII_REGEX,
     PREFILTRO,
     PREFIXO_POR_TIPO,
+    RETENCAO_BRUTO_DIAS,
     TIPOS,
 )
 
@@ -98,6 +102,11 @@ class ErroCompilacao(ErroOperacao):
             f"compilação falhou após {tentativas} tentativas "
             f"(motivo: {motivo}): " + "; ".join(self.erros)
         )
+
+
+class ErroPublicacao(ErroOperacao):
+    """Falha ao preparar arquivos ou falar com git/GitHub."""
+
 
 
 # Contrato JSON pedido ao Gemini em modo estruturado.
@@ -188,12 +197,17 @@ def hash_linha(linha):
     return hashlib.sha256(linha.encode("utf-8")).hexdigest()[:4]
 
 
-def gerar_source_id(tipo, data, existentes, texto=""):
-    """Gera `PREFIXO-DATA`, acrescentando sufixo hex 6→8→10 em colisão."""
+def gerar_source_id(tipo, data, existentes, texto="", sufixo_sempre=False):
+    """Gera `PREFIXO-DATA`, acrescentando sufixo hex 6→8→10 em colisão.
+
+    A publicação usa `sufixo_sempre=True` (formato `PREFIXO-DATA-ABCDEF`); o
+    parâmetro padrão preserva o comportamento anterior, sem sufixo quando a
+    base está livre.
+    """
     if tipo not in PREFIXO_POR_TIPO:
         raise ErroFonte(f"tipo inválido para source_id: {tipo!r}")
     base = f"{PREFIXO_POR_TIPO[tipo]}-{data}"
-    if base not in existentes:
+    if not sufixo_sempre and base not in existentes:
         return base
     resumo = hashlib.sha256(normalizar(texto).encode("utf-8")).hexdigest().upper()
     for tamanho in (6, 8, 10):
@@ -901,20 +915,38 @@ def _restaurar_wiki(raiz, snapshot):
         destino.write_text(texto, encoding="utf-8")
 
 
-def _erros_lint(raiz, source_id):
-    from tools.lint_wiki import revisar
+def _normalizar_lint(resultado):
+    if isinstance(resultado, dict):
+        return {
+            "erros": list(resultado.get("erros", []) or []),
+            "avisos": list(resultado.get("avisos", []) or []),
+        }
+    return {"erros": list(resultado or []), "avisos": []}
 
-    resultado = revisar(raiz)
+
+def _erros_de_lint(resultado, source_id):
+    itens = resultado.get("erros", []) if isinstance(resultado, dict) else resultado
     erros = []
-    for erro in resultado["erros"]:
-        if (
-            erro["problema"] == "Fonte desconhecida"
-            and source_id
-            and source_id in erro["detalhe"]
-        ):
-            continue
-        erros.append(f"{erro['pagina']}: {erro['mensagem']}")
+    for erro in itens or []:
+        if isinstance(erro, dict):
+            problema = erro.get("problema")
+            detalhe = str(erro.get("detalhe", ""))
+            if problema == "Fonte desconhecida" and source_id and source_id in detalhe:
+                continue
+            pagina = erro.get("pagina", "?")
+            mensagem = erro.get("mensagem") or detalhe or problema or "erro de lint"
+            erros.append(f"{pagina}: {mensagem}")
+        else:
+            erros.append(str(erro))
     return erros
+
+
+def _erros_lint(raiz, source_id, lint=None):
+    if lint is None:
+        from tools.lint_wiki import revisar
+
+        lint = revisar
+    return _erros_de_lint(_normalizar_lint(lint(raiz)), source_id)
 
 
 def _validar_proposta(dados):
@@ -1342,6 +1374,7 @@ def compilar(
     source_id=None,
     nomes=None,
     max_tentativas=MAX_TENTATIVAS,
+    lint=None,
 ):
     """Compila uma fonte local com até `max_tentativas` tentativas.
 
@@ -1393,7 +1426,7 @@ def compilar(
                     nomes=nomes,
                     contradicoes=dados["contradicoes"],
                 )
-                erros_lint = _erros_lint(raiz, source_id)
+                erros_lint = _erros_lint(raiz, source_id, lint)
                 if erros_lint:
                     raise ErroLint(erros_lint)
             except Exception:
@@ -1432,6 +1465,647 @@ def compilar(
         }
 
     raise ErroCompilacao(motivo, erros_anteriores, max_tentativas)
+
+
+# ---------------------------------------------------------------------------
+# Publicação: fonte derivada, manifesto e PR
+# ---------------------------------------------------------------------------
+
+CHECKLIST_GESTAO = (
+    "Conferir se o documento é autêntico.",
+    "Confirmar a autoridade declarada.",
+    "Conferir as citações e a data.",
+    "Confirmar que não há dados pessoais.",
+    "Conferir as páginas que voltaram a rascunho.",
+)
+
+
+def _como_datetime(agora):
+    """Resolve o relógio injetável para um `datetime` UTC."""
+    valor = agora() if callable(agora) else agora
+    if valor is None:
+        return datetime.now(timezone.utc)
+    if isinstance(valor, str):
+        texto = valor.strip().replace("Z", "+00:00")
+        valor = datetime.fromisoformat(texto)
+    if not isinstance(valor, datetime):
+        raise ErroPublicacao("relógio inválido: use datetime ou texto ISO")
+    if valor.tzinfo is None:
+        valor = valor.replace(tzinfo=timezone.utc)
+    return valor.astimezone(timezone.utc)
+
+
+def _iso_utc(valor):
+    return _como_datetime(valor).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def sanitizar_titulo(titulo, nomes=None):
+    """Remove nomes do título público, sem caixa e por palavra inteira."""
+    texto = str(titulo or "").strip()
+    for nome in _nomes_ordenados(nomes):
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto or "Fonte sem título"
+
+
+def fonte_derivada(texto, nomes=None):
+    """Fonte pública: original byte a byte, exceto spans exatos de nome."""
+    return substituir_nomes(texto, nomes)
+
+
+def arquivo_fonte_derivada(source_id, tipo):
+    """Caminho relativo da fonte derivada para o tipo informado."""
+    if tipo not in PASTA_POR_TIPO:
+        raise ErroFonte(f"tipo inválido para fonte derivada: {tipo!r}")
+    return f"sources/{PASTA_POR_TIPO[tipo]}/{source_id}.md"
+
+
+def entrada_manifesto(
+    fonte, source_id, hash_conteudo_, submetido_em, *, nomes=None, arquivo=None
+):
+    """Monta a entrada pública do manifesto, com título sanitizado."""
+    tipo = fonte["tipo"]
+    if tipo not in AUTORIDADE_POR_TIPO:
+        raise ErroFonte(f"tipo inválido para o manifesto: {tipo!r}")
+    return {
+        "id": source_id,
+        "titulo": sanitizar_titulo(fonte["titulo"], nomes),
+        "tipo": tipo,
+        "autoridade": AUTORIDADE_POR_TIPO[tipo],
+        "data": fonte["data"],
+        "arquivo": arquivo or arquivo_fonte_derivada(source_id, tipo),
+        "uso": "wiki",
+        "origem": "envio",
+        "submetido_em": submetido_em,
+        "hash": hash_conteudo_,
+    }
+
+
+def preparar_publicacao(
+    raiz,
+    fonte,
+    source_id,
+    submetido_em,
+    *,
+    nomes=None,
+    texto_derivado=None,
+    hash_=None,
+    manifesto=None,
+):
+    """Grava a fonte derivada e acrescenta a entrada ao manifesto.
+
+    A fonte derivada é escrita sem acrescentar ou remover bytes além da
+    substituição exata dos nomes. O manifesto só recebe fontes aprovadas;
+    quarentena nunca chega aqui.
+    """
+    raiz = Path(raiz)
+    tipo = fonte["tipo"]
+    derivado = (
+        texto_derivado
+        if texto_derivado is not None
+        else fonte_derivada(fonte["texto"], nomes)
+    )
+    arquivo = arquivo_fonte_derivada(source_id, tipo)
+    destino = raiz / arquivo
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(derivado.encode("utf-8"))
+
+    if manifesto is None:
+        manifesto = carregar_manifesto(raiz)
+    fontes = manifesto.setdefault("fontes", [])
+    if any(item.get("id") == source_id for item in fontes):
+        raise ErroPublicacao(f"source_id já existe no manifesto: {source_id}")
+    entrada = entrada_manifesto(
+        fonte,
+        source_id,
+        hash_ if hash_ is not None else hash_conteudo(fonte["texto"]),
+        submetido_em,
+        nomes=nomes,
+        arquivo=arquivo,
+    )
+    fontes.append(entrada)
+    if isinstance(submetido_em, str) and len(submetido_em) >= 10:
+        manifesto["atualizado_em"] = submetido_em[:10]
+    (raiz / "sources/manifest.json").write_text(
+        json.dumps(manifesto, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "source_id": source_id,
+        "arquivo": arquivo,
+        "entrada": entrada,
+        "texto_derivado": derivado,
+        "substituicoes": contar_substituicoes(fonte["texto"], nomes or []),
+    }
+
+
+def _texto_seguro(valor, nomes=None):
+    """Normaliza um texto para o corpo do PR e remove nomes por segurança."""
+    texto = " ".join(str(valor or "").split())
+    for nome in _nomes_ordenados(nomes):
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
+    return texto
+
+
+def _itens_texto(itens, nomes=None):
+    linhas = []
+    for item in itens or []:
+        if isinstance(item, dict):
+            texto = (
+                item.get("texto")
+                or item.get("resumo")
+                or item.get("titulo")
+                or ""
+            )
+            fontes = item.get("fontes") or ([item["fonte"]] if item.get("fonte") else [])
+            texto = _texto_seguro(texto, nomes)
+            if fontes:
+                citacoes = " ".join(
+                    f"[fonte: {_texto_seguro(fonte, nomes)}]" for fonte in fontes
+                )
+                texto = f"{texto} {citacoes}".strip()
+        else:
+            texto = _texto_seguro(item, nomes)
+        if texto:
+            linhas.append(texto)
+    return linhas
+
+
+def _resumo_lint(lint=None):
+    if lint is None:
+        return "não executado"
+    if isinstance(lint, dict):
+        erros = lint.get("erros", []) or []
+        avisos = lint.get("avisos", []) or []
+        if not erros:
+            return f"0 erros, {len(avisos)} aviso(s)."
+        mensagens = []
+        for erro in erros:
+            if isinstance(erro, dict):
+                mensagens.append(
+                    str(erro.get("mensagem") or erro.get("detalhe") or erro.get("problema"))
+                )
+            else:
+                mensagens.append(str(erro))
+        return f"{len(erros)} erro(s): " + "; ".join(mensagens)
+    return str(lint)
+
+
+def _data_exclusao(submetido_em, exclusao_em=None):
+    if exclusao_em:
+        return str(exclusao_em)
+    try:
+        inicio = date.fromisoformat(str(submetido_em)[:10])
+    except ValueError:
+        return "desconhecida"
+    return (inicio + timedelta(days=RETENCAO_BRUTO_DIAS)).isoformat()
+
+
+def montar_corpo_pr(
+    *,
+    source_id,
+    titulo,
+    tipo=None,
+    autoridade=None,
+    data=None,
+    arquivo=None,
+    hash_=None,
+    submetido_em=None,
+    exclusao_em=None,
+    nomes_removidos=0,
+    classificacao=None,
+    lint=None,
+    fatos_novos=None,
+    mudancas=None,
+    contradicoes=None,
+    lacunas=None,
+    checklist=None,
+    possivel_duplicata=False,
+    nomes=None,
+    fonte=None,
+):
+    """Monta o corpo público do PR sem UUID, texto bruto ou nomes."""
+    if fonte:
+        tipo = tipo or fonte.get("tipo")
+        data = data or fonte.get("data")
+        titulo = titulo or fonte.get("titulo")
+    titulo = sanitizar_titulo(titulo, nomes)
+    autoridade = autoridade or AUTORIDADE_POR_TIPO.get(tipo, "desconhecida")
+    linhas = [
+        "## Metadados da fonte",
+        "",
+        f"- **source_id:** {_texto_seguro(source_id, nomes)}",
+        f"- **Título:** {titulo}",
+        f"- **Tipo:** {_texto_seguro(tipo or 'desconhecido', nomes)}",
+        f"- **Autoridade:** {_texto_seguro(autoridade, nomes)}",
+        f"- **Data do documento:** {_texto_seguro(data or 'desconhecida', nomes)}",
+        f"- **Arquivo:** {_texto_seguro(arquivo or '', nomes)}",
+        f"- **Hash (sha256):** {_texto_seguro(hash_ or '', nomes)}",
+        f"- **Submetido em:** {_texto_seguro(submetido_em or 'desconhecido', nomes)}",
+        f"- **Exclusão do original:** {_data_exclusao(submetido_em, exclusao_em)} "
+        f"(TTL de {RETENCAO_BRUTO_DIAS} dias)",
+        "",
+        "> **Envio anônimo.** O UUID do job, o texto bruto da fonte e nomes de "
+        "pessoas não aparecem neste PR. A gestão revisa antes de publicar.",
+        "",
+        "## Fatos novos",
+        "",
+    ]
+    fatos = _itens_texto(fatos_novos, nomes)
+    linhas.extend([f"- {item}" for item in fatos] or ["- Nenhum fato novo."])
+    linhas.extend(["", "## Mudanças", ""])
+    mudancas_txt = _itens_texto(mudancas, nomes)
+    linhas.extend([f"- {item}" for item in mudancas_txt] or ["- Nenhuma mudança."])
+    linhas.extend(["", "## Contradições", ""])
+    contras = _itens_texto(contradicoes, nomes)
+    linhas.extend([f"- {item}" for item in contras] or ["- Nenhuma contradição."])
+    linhas.extend(["", "## Lacunas", ""])
+    lacunas_txt = _itens_texto(lacunas, nomes)
+    linhas.extend([f"- {item}" for item in lacunas_txt] or ["- Nenhuma lacuna nova."])
+
+    linhas.extend(["", "## Lint", "", f"- {_resumo_lint(lint)}"])
+
+    linhas.extend(["", "## Classificação", ""])
+    if isinstance(classificacao, dict):
+        injecao = "sim" if classificacao.get("injecao") else "não"
+        sinais = classificacao.get("sinais") or []
+        linhas.append(
+            f"- **Resultado:** {_texto_seguro(classificacao.get('resultado') or 'ok', nomes)}"
+        )
+        linhas.append(f"- **Injeção detectada:** {injecao}")
+        linhas.append(f"- **Sinais:** {len(sinais)}")
+    else:
+        linhas.append("- Classificação não informada.")
+
+    linhas.extend(
+        [
+            "",
+            "## Nomes removidos",
+            "",
+            f"- Substituições exatas: {int(nomes_removidos)}",
+            "",
+            "## Checklist da gestão",
+            "",
+        ]
+    )
+    itens_checklist = list(checklist or CHECKLIST_GESTAO)
+    if possivel_duplicata:
+        itens_checklist.append(
+            "Conferir possível duplicata (mesmo tipo, data e título)."
+        )
+    linhas.extend(f"- [ ] {item}" for item in itens_checklist)
+    return "\n".join(linhas).rstrip() + "\n"
+
+
+def _rodar_comando(comando, raiz):
+    processo = subprocess.run(
+        comando, cwd=str(raiz), capture_output=True, text=True, check=False
+    )
+    if processo.returncode != 0:
+        detalhe = (processo.stderr or processo.stdout or "").strip()
+        raise ErroPublicacao(
+            f"{comando[0]} falhou com código {processo.returncode}: {detalhe}"
+        )
+    return processo.stdout
+
+
+def _git_padrao(argumentos, raiz):
+    return _rodar_comando(["git", *argumentos], raiz)
+
+
+def _gh_padrao(argumentos, raiz):
+    return _rodar_comando(["gh", *argumentos], raiz)
+
+
+def abrir_pr(
+    raiz,
+    source_id,
+    titulo,
+    corpo,
+    *,
+    labels=None,
+    nomes=None,
+    git=None,
+    gh=None,
+):
+    """Cria branch, um único commit e abre o PR com efeitos injetáveis."""
+    raiz = Path(raiz)
+    git = git or _git_padrao
+    gh = gh or _gh_padrao
+    branch = f"ingest/{source_id}"
+    mensagem = f"Ingest {source_id}"
+    titulo_fonte = sanitizar_titulo(titulo, nomes)
+    titulo_pr = f"Ingest {source_id}: {titulo_fonte}"
+    rotulos = list(labels or ["ingest", "precisa-verificacao"])
+
+    git(["checkout", "-B", branch], raiz)
+    git(["add", "--all"], raiz)
+    git(["commit", "-m", mensagem], raiz)
+    argumentos_gh = [
+        "pr",
+        "create",
+        "--title",
+        titulo_pr,
+        "--body",
+        corpo,
+        "--base",
+        "main",
+        "--head",
+        branch,
+    ]
+    for rotulo in rotulos:
+        argumentos_gh.extend(["--label", rotulo])
+    saida = gh(argumentos_gh, raiz)
+    url = next(
+        (linha.strip() for linha in str(saida).splitlines() if linha.strip().startswith("http")),
+        str(saida).strip(),
+    )
+    return {
+        "branch": branch,
+        "commit": mensagem,
+        "titulo": titulo_pr,
+        "corpo": corpo,
+        "labels": rotulos,
+        "url": url,
+    }
+
+
+def _ids_existentes(raiz, existentes=None):
+    ids = {item["id"] for item in carregar_manifesto(raiz).get("fontes", [])}
+    for item in existentes or []:
+        if isinstance(item, str):
+            ids.add(item)
+        elif isinstance(item, dict):
+            if item.get("source_id"):
+                ids.add(str(item["source_id"]))
+            elif item.get("id") and not re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                str(item["id"]),
+            ):
+                ids.add(str(item["id"]))
+    return ids
+
+
+def _emitir_resultado(
+    status,
+    motivo,
+    source_id,
+    *,
+    atualizar_status=None,
+    notificar=None,
+    pr_url=None,
+    evento=None,
+):
+    if atualizar_status is not None:
+        atualizar_status(status, motivo)
+    if notificar is not None:
+        payload = {
+            "evento": evento or ("pr_aberto" if status == "aguardando_revisao" else status),
+            "source_id": source_id,
+            "status": status,
+            "motivo": motivo,
+        }
+        if pr_url:
+            payload["pr_url"] = pr_url
+        notificar(payload)
+
+
+def _restaurar_publicacao(raiz, snapshot_wiki, manifesto_original, derivado):
+    _restaurar_wiki(raiz, snapshot_wiki)
+    (Path(raiz) / "sources/manifest.json").write_text(
+        manifesto_original, encoding="utf-8"
+    )
+    caminho = Path(raiz) / derivado
+    if caminho.exists():
+        caminho.unlink()
+
+
+def publicar(
+    fonte,
+    raiz,
+    chamar_modelo,
+    *,
+    resultado_triagem=None,
+    nomes=None,
+    texto_derivado=None,
+    source_id=None,
+    existentes=None,
+    submetido_em=None,
+    agora=None,
+    lint=None,
+    git=None,
+    gh=None,
+    atualizar_status=None,
+    notificar=None,
+    max_tentativas=MAX_TENTATIVAS,
+    possivel_duplicata=False,
+):
+    """Compila, grava a fonte derivada, roda o lint e abre o PR.
+
+    A triagem é opcional: quando `resultado_triagem` chega em `quarentena` ou
+    `falhou`, nada é publicado. `sem_mudancas` não grava fonte derivada, não
+    entra no manifesto e não abre PR. Todos os efeitos externos são
+    injetáveis (`lint`, `git`, `gh`, relógio e notificação).
+    """
+    raiz = Path(raiz)
+    resultado_triagem = resultado_triagem or {}
+    nomes = list(nomes if nomes is not None else resultado_triagem.get("nomes") or [])
+    if isinstance(existentes, dict):
+        existentes = list(existentes.values())
+    submetido_em = submetido_em or _iso_utc(agora)
+
+    status_triagem = resultado_triagem.get("resultado")
+    if status_triagem in ("quarentena", "falhou"):
+        motivo = resultado_triagem.get("motivo") or status_triagem
+        _emitir_resultado(
+            status_triagem,
+            motivo,
+            resultado_triagem.get("source_id"),
+            atualizar_status=atualizar_status,
+            notificar=notificar,
+            evento=status_triagem,
+        )
+        return {
+            "status": status_triagem,
+            "resultado": status_triagem,
+            "motivo": motivo,
+            "source_id": resultado_triagem.get("source_id"),
+            "pr": None,
+        }
+
+    fonte = validar_fonte(fonte)
+    ids = _ids_existentes(raiz, existentes)
+    if source_id is None:
+        source_id = gerar_source_id(
+            fonte["tipo"], fonte["data"], ids, fonte["texto"], sufixo_sempre=True
+        )
+    original_derivado = (
+        texto_derivado
+        if texto_derivado is not None
+        else resultado_triagem.get("texto_derivado")
+        or fonte_derivada(fonte["texto"], nomes)
+    )
+    hash_ = hash_conteudo(fonte["texto"])
+    snapshot_wiki = _snapshot_wiki(raiz)
+    manifesto_original = (raiz / "sources/manifest.json").read_text(encoding="utf-8")
+
+    try:
+        compilacao = compilar(
+            fonte,
+            raiz,
+            chamar_modelo,
+            source_id=source_id,
+            nomes=nomes,
+            max_tentativas=max_tentativas,
+            lint=lint,
+        )
+    except ErroCompilacao as erro:
+        _emitir_resultado(
+            "falhou",
+            erro.motivo,
+            source_id,
+            atualizar_status=atualizar_status,
+            notificar=notificar,
+            evento="falhou",
+        )
+        return {
+            "status": "falhou",
+            "resultado": "falhou",
+            "motivo": erro.motivo,
+            "source_id": source_id,
+            "erros": list(erro.erros),
+            "pr": None,
+        }
+
+    if not compilacao["operacoes"] and not compilacao["contradicoes"]:
+        _emitir_resultado(
+            "sem_mudancas",
+            None,
+            source_id,
+            atualizar_status=atualizar_status,
+            notificar=notificar,
+            evento="sem_mudancas",
+        )
+        return {
+            "status": "sem_mudancas",
+            "resultado": "sem_mudancas",
+            "motivo": None,
+            "source_id": source_id,
+            "pr": None,
+            "compilacao": compilacao,
+        }
+
+    publicacao = preparar_publicacao(
+        raiz,
+        fonte,
+        source_id,
+        submetido_em,
+        nomes=nomes,
+        texto_derivado=original_derivado,
+        hash_=hash_,
+    )
+    if lint is None:
+        from tools.lint_wiki import revisar
+
+        lint = revisar
+    resultado_lint = _normalizar_lint(lint(raiz))
+    erros_lint = _erros_de_lint(resultado_lint, source_id)
+    if erros_lint:
+        _restaurar_publicacao(
+            raiz, snapshot_wiki, manifesto_original, publicacao["arquivo"]
+        )
+        _emitir_resultado(
+            "falhou",
+            "lint",
+            source_id,
+            atualizar_status=atualizar_status,
+            notificar=notificar,
+            evento="falhou",
+        )
+        return {
+            "status": "falhou",
+            "resultado": "falhou",
+            "motivo": "lint",
+            "source_id": source_id,
+            "erros": erros_lint,
+            "pr": None,
+        }
+
+    nomes_removidos = contar_substituicoes(fonte["texto"], nomes)
+    corpo = montar_corpo_pr(
+        source_id=source_id,
+        titulo=fonte["titulo"],
+        tipo=fonte["tipo"],
+        autoridade=AUTORIDADE_POR_TIPO[fonte["tipo"]],
+        data=fonte["data"],
+        arquivo=publicacao["arquivo"],
+        hash_=hash_,
+        submetido_em=submetido_em,
+        nomes_removidos=nomes_removidos,
+        classificacao=resultado_triagem,
+        lint=resultado_lint,
+        fatos_novos=compilacao["fatos_novos"],
+        mudancas=compilacao["mudancas"],
+        contradicoes=compilacao["contradicoes"],
+        lacunas=compilacao["lacunas"],
+        possivel_duplicata=possivel_duplicata,
+        nomes=nomes,
+    )
+    rotulos = ["ingest", "precisa-verificacao"]
+    if possivel_duplicata:
+        rotulos.append("possivel-duplicata")
+    try:
+        pr = abrir_pr(
+            raiz,
+            source_id,
+            fonte["titulo"],
+            corpo,
+            labels=rotulos,
+            nomes=nomes,
+            git=git,
+            gh=gh,
+        )
+    except ErroPublicacao as erro:
+        _emitir_resultado(
+            "falhou",
+            "infra",
+            source_id,
+            atualizar_status=atualizar_status,
+            notificar=notificar,
+            evento="falhou",
+        )
+        return {
+            "status": "falhou",
+            "resultado": "falhou",
+            "motivo": "infra",
+            "source_id": source_id,
+            "erros": [str(erro)],
+            "pr": None,
+        }
+
+    _emitir_resultado(
+        "aguardando_revisao",
+        None,
+        source_id,
+        atualizar_status=atualizar_status,
+        notificar=notificar,
+        pr_url=pr.get("url"),
+        evento="pr_aberto",
+    )
+    return {
+        "status": "aguardando_revisao",
+        "resultado": "aguardando_revisao",
+        "motivo": None,
+        "source_id": source_id,
+        "pr": pr,
+        "publicacao": publicacao,
+        "compilacao": compilacao,
+        "nomes_removidos": nomes_removidos,
+        "lint": resultado_lint,
+    }
 
 
 def _transporte_urllib(url, cabecalhos, corpo):
