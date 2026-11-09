@@ -186,6 +186,12 @@ class BaseEnvio(unittest.TestCase):
         return app.enviar(request or FakeRequest(), dados if dados is not None else dados_envio())
 
 
+class TestVerificadorTurnstile(unittest.TestCase):
+    def test_sem_token_ou_segredo_falha_sem_rede(self):
+        self.assertFalse(app.verificar_turnstile("", "203.0.113.7", secret="segredo"))
+        self.assertFalse(app.verificar_turnstile("token", "203.0.113.7", secret=""))
+
+
 class TestConfig(BaseEnvio):
     def test_config_devolve_rotulos_portugueses(self):
         resposta = app.config_enviar()
@@ -199,6 +205,9 @@ class TestConfig(BaseEnvio):
                 {"valor": "outro", "rotulo": "Relato"},
             ],
         )
+
+    def test_config_devolve_site_key_quando_aberto(self):
+        self.assertEqual(app.config_enviar()["turnstile_site_key"], "site-key")
 
     def test_config_fechado_quando_switch_desligado(self):
         with patch.object(config_ingestao, "INGEST_ABERTO", False):
@@ -219,9 +228,11 @@ class TestEnvioValidacao(BaseEnvio):
         self.assertEqual(self.fake.limites, {})
 
     def test_chaves_ausentes_fecham_mesmo_com_switch_ligado(self):
-        with patch.dict(os.environ, {"TURNSTILE_SITE_KEY": ""}):
-            detalhe = self.assert_http(503, self.enviar)
-        self.assertEqual(detalhe, app.MSG_ENVIO_FECHADO)
+        for chave in ("TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+            with self.subTest(chave=chave):
+                with patch.dict(os.environ, {chave: ""}):
+                    detalhe = self.assert_http(503, self.enviar)
+                self.assertEqual(detalhe, app.MSG_ENVIO_FECHADO)
 
     def test_tamanho_antes_do_tipo(self):
         detalhe = self.assert_http(

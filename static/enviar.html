@@ -136,6 +136,8 @@
 
         <p class="dica-pii" id="dica-pii">Não envie CPF, RA, telefone, e-mail pessoal ou nomes de pessoas.</p>
 
+        <div id="turnstile-widget" class="turnstile-slot"></div>
+
         <div class="acoes-envio">
           <button class="or-btn or-btn--primary" type="submit" id="botao-enviar">Enviar fonte</button>
         </div>
@@ -231,6 +233,11 @@
     let temporizadorTempo = null;
     let inicioMs = null;
     let statusAnterior = null;
+    let turnstileWidgetId = null;
+    let turnstileToken = "";
+    let turnstilePendente = null;
+    let turnstilePreparo = null;
+    let carregandoTurnstile = null;
 
     function rotuloTema() {
       const escuro = document.documentElement.dataset.theme === "dark";
@@ -300,6 +307,86 @@
       linhaPr.hidden = false;
     }
 
+    function carregarTurnstile() {
+      if (window.turnstile) return Promise.resolve(window.turnstile);
+      if (carregandoTurnstile) return carregandoTurnstile;
+      carregandoTurnstile = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+          if (window.turnstile) resolve(window.turnstile);
+          else reject(new Error("Turnstile indisponível"));
+        };
+        script.onerror = () => reject(new Error("Turnstile indisponível"));
+        document.head.appendChild(script);
+      });
+      return carregandoTurnstile;
+    }
+
+    function guardarTokenTurnstile(token) {
+      turnstileToken = typeof token === "string" ? token : "";
+      if (turnstilePendente) {
+        const resolver = turnstilePendente;
+        turnstilePendente = null;
+        resolver(turnstileToken);
+      }
+    }
+
+    async function prepararTurnstile(siteKey) {
+      if (!siteKey || !document.getElementById("turnstile-widget")) return;
+      try {
+        const turnstile = await carregarTurnstile();
+        turnstileWidgetId = turnstile.render("turnstile-widget", {
+          sitekey: siteKey,
+          size: "invisible",
+          callback: guardarTokenTurnstile,
+          "expired-callback": () => { turnstileToken = ""; },
+          "error-callback": () => { guardarTokenTurnstile(""); return true; }
+        });
+      } catch (e) {
+        turnstileWidgetId = null;
+      }
+    }
+
+    async function obterTokenTurnstile() {
+      if (turnstilePreparo) {
+        try { await turnstilePreparo; } catch (e) { /* sem widget */ }
+      }
+      if (turnstileWidgetId == null) return "";
+      if (turnstileToken) {
+        const token = turnstileToken;
+        turnstileToken = "";
+        return token;
+      }
+      return new Promise((resolve) => {
+        let relogio = null;
+        let concluido = false;
+        const finalizar = (token) => {
+          if (concluido) return;
+          concluido = true;
+          turnstilePendente = null;
+          if (relogio) clearTimeout(relogio);
+          resolve(token);
+        };
+        relogio = setTimeout(() => finalizar(""), 30000);
+        turnstilePendente = finalizar;
+        try {
+          window.turnstile.execute(turnstileWidgetId);
+        } catch (e) {
+          finalizar("");
+        }
+      });
+    }
+
+    function reiniciarTurnstile() {
+      turnstileToken = "";
+      if (turnstileWidgetId != null && window.turnstile) {
+        try { window.turnstile.reset(turnstileWidgetId); } catch (e) { /* sem widget */ }
+      }
+    }
+
     async function carregarConfig() {
       try {
         const resposta = await fetch("/api/enviar/config", { headers: { Accept: "application/json" } });
@@ -315,6 +402,7 @@
         if (Number.isFinite(limite) && limite > 0) maxBytes = limite;
         estadoFechado.hidden = true;
         form.hidden = false;
+        turnstilePreparo = prepararTurnstile(config.turnstile_site_key);
         document.getElementById("titulo").focus();
       } catch (e) {
         textoFechado.textContent = "Não foi possível carregar o formulário agora. Tente de novo em alguns instantes.";
@@ -367,17 +455,17 @@
         mostrarErro("O texto passa do limite de 50 KB.");
         return;
       }
-      const dados = {
-        tipo: document.getElementById("tipo").value,
-        titulo: document.getElementById("titulo").value,
-        data_documento: document.getElementById("data-documento").value,
-        texto,
-        turnstile_token: typeof window.turnstileToken === "string" ? window.turnstileToken : ""
-      };
-
       botaoEnviar.disabled = true;
       botaoEnviar.textContent = "Enviando…";
       try {
+        const tokenTurnstile = await obterTokenTurnstile();
+        const dados = {
+          tipo: document.getElementById("tipo").value,
+          titulo: document.getElementById("titulo").value,
+          data_documento: document.getElementById("data-documento").value,
+          texto,
+          turnstile_token: tokenTurnstile
+        };
         const resposta = await fetch("/api/enviar", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -403,6 +491,7 @@
         focarTitulo();
       } finally {
         if (!enviado) {
+          reiniciarTurnstile();
           botaoEnviar.disabled = false;
           botaoEnviar.textContent = "Enviar fonte";
         }

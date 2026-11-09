@@ -216,6 +216,23 @@ class TestPaginaEnviar(unittest.TestCase):
         self.assertIn(".focus()", self.texto)
         self.assertIn('aria-current="page"', self.texto)
 
+    def test_widget_turnstile_invisivel_so_quando_aberto(self):
+        self.assertIn('id="turnstile-widget"', self.texto)
+        self.assertIn("turnstile.render", self.texto)
+        self.assertIn('size: "invisible"', self.texto)
+        self.assertIn("api.js?render=explicit", self.texto)
+        self.assertIn("obterTokenTurnstile", self.texto)
+        self.assertIn("turnstile_token", self.texto)
+
+    def test_widget_nao_carrega_na_pagina_fechada(self):
+        self.assertNotIn('src="https://challenges.cloudflare.com/turnstile', self.texto)
+        fechado = self.texto.index("config.aberto !== true")
+        abre_formulario = self.texto.index("form.hidden = false")
+        prepara = self.texto.index("prepararTurnstile(config.turnstile_site_key)")
+        self.assertLess(fechado, abre_formulario)
+        self.assertLess(abre_formulario, prepara)
+        self.assertIn("form.hidden = true", self.texto[:prepara])
+
 
 class TestNavegacaoComum(unittest.TestCase):
     def test_link_adicionar_fonte_em_todas_as_paginas(self):
