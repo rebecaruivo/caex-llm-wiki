@@ -66,11 +66,12 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 | `wiki/` | Conhecimento compilado |
 | `evals/` | 12 testes com critérios de avaliação |
 | `config_ingestao.py` | Constantes, switches e regexes da ingestão |
-| `ingerir.py` | Núcleo do compilador, triagem e substituição de nomes |
+| `ingerir.py` | Núcleo do compilador, triagem, substituição de nomes e publicação |
 | `tests/` | Suíte determinística com `unittest`, sem rede |
 | `tools/lint_wiki.py` | Validador automático |
 | `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
 | `tools/triar_local.py` | Triagem local: pré-filtro, classificador e nomes |
+| `tools/ingerir.py` | Publicação: triagem → compilador → fonte derivada → manifesto → lint → PR |
 
 ## Como usar
 ```bash
@@ -180,6 +181,44 @@ Para testar o oráculo em um agente, peça:
 ```text
 Use prompts/oraculo.md e responda só com a wiki: Quando será a Semana de Integração?
 ```
+
+## Publicação e PR
+O `tools/ingerir.py` é o caminho completo de publicação, reutilizável pelo
+worker (ticket #7). Ele roda a triagem, compila com os guardrails, grava a
+fonte derivada, atualiza o manifesto, roda o lint e abre o PR. Git, GitHub,
+lint, relógio e modelo são injetáveis; a suíte determinística não usa rede.
+
+```bash
+python3 tools/ingerir.py --fonte fonte.json
+```
+
+A fonte derivada fica em `sources/atas|guias|relatos/<source_id>.md` e é
+idêntica ao original byte a byte, exceto pela troca exata de cada span de nome
+por `[nome removido]`. O `source_id` usa o prefixo do tipo, a data do
+documento e um sufixo hexadecimal; em colisão com o manifesto ou com jobs já
+existentes, o sufixo cresce de 6 para 8 e depois 10 caracteres.
+
+A entrada do manifesto registra `id`, título sanitizado, `tipo`,
+`autoridade`, `data`, `arquivo`, `uso: wiki`, `origem: envio`,
+`submetido_em` e `hash` (SHA-256 do texto normalizado). Fonte em quarentena
+nunca entra no manifesto, não gera derivado e não abre PR.
+
+O PR usa o branch `ingest/<source_id>`, um único commit `Ingest <source_id>` e
+o título `Ingest <source_id>: <título sem nomes>`. O corpo traz metadados e
+hash, aviso de envio anônimo, fatos, mudanças, contradições, lacunas, resultado
+do lint, quantidade de substituições, classificação, checklist da gestão e a
+data de exclusão do original (30 dias). O UUID do job, o texto bruto e nomes
+de pessoas nunca aparecem em branch, commit, título ou corpo.
+
+O lint roda antes de abrir o PR e, se falhar nas três tentativas do
+compilador, o resultado é `falhou`/`lint` sem PR. Quando a proposta não tem
+operações nem contradições, o resultado é `sem_mudancas`: nenhum PR é aberto e
+o original permanece no Supabase até o TTL. Páginas tocadas voltam a
+`status: rascunho`, perdem validação, mantêm `confianca` e recebem
+`atualizado_em = max(atual, data_documento)`.
+
+Códigos de saída: `0` publicado ou sem mudanças, `1` quarentena e `2` falha ou
+entrada inválida.
 
 ## Próximos passos
 1. Rodar os testes e publicar a taxa de acerto.
