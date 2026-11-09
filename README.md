@@ -76,6 +76,8 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 | `github_ingest.py` | Consulta pública de PR para reconciliar locks antigos |
 | `reconciliacao.py` | Fechamento do job no merge/close do PR |
 | `tests/` | Suíte determinística com `unittest`, sem rede |
+| `static/enviar.html` | Formulário público e página de andamento do envio |
+| `docs/frontend-enviar.md` | Mensagens por estado e checklist visual manual |
 | `tools/lint_wiki.py` | Validador automático |
 | `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
 | `tools/triar_local.py` | Triagem local: pré-filtro, classificador e nomes |
@@ -127,6 +129,35 @@ Crie as tabelas do ingest com `supabase/ingest.sql` (separado de
 chave secreta usada pela API acessa os dados. As RPCs são `tomar_lock_fila`,
 `liberar_lock_fila`, `marcar_pr_aberto`, `consumir_limite`, `consumir_ip` e
 `consumir_global`.
+
+## Formulário de envio (`/enviar`)
+
+`GET /enviar` entrega o formulário público e `GET /enviar/{uuid}` a página de
+andamento; as duas usam `static/enviar.html` e `Cache-Control: no-cache`. A
+página lê o UUID do caminho. Com `GET /api/enviar/config` devolvendo
+`aberto: false`, aparece só “Envio fechado para testes.” e o formulário não é
+renderizado. Com `aberto: true`, o formulário oferece tipo (Ata, Guia ou
+Relato), título, data, texto, arquivo `.md`/`.txt` de até 50 KB lido no
+navegador, consentimento e o botão “Enviar fonte”.
+
+O envio chama `POST /api/enviar` e mostra o `detail` exato da API para
+`503` (fechado), `422` (PII ou campo inválido), `409` (duplicata), `429`
+(limite por IP ou global) e `403` (Turnstile). No sucesso, exibe “Fonte
+recebida.” e um link compartilhável para `/enviar/<uuid>`; o UUID é a
+capacidade de acompanhamento. O widget e as chaves do Turnstile ficam no
+ticket #9.
+
+A página de andamento consulta `GET /api/ingest/{uuid}` a cada 5 s em
+`processando` e a cada 15 s em `na_fila`/`aguardando_revisao`, parando em
+`publicado`, `fechado_sem_merge`, `sem_mudancas`, `quarentena`, `falhou` ou
+`expirado`. Mostra a posição na fila, o tempo decorrido, o `source_id`, o link
+do PR, a mensagem do estado e o botão “Atualizar” após o estado terminal.
+`404` mostra “Este envio não está mais disponível.”.
+
+A página usa `textContent`/`createElement` (nunca `innerHTML` com texto da
+API), `aria-live="polite"`, foco no título após mudanças de estado e controles
+acessíveis por teclado. As mensagens por estado e o checklist visual manual
+estão em [`docs/frontend-enviar.md`](docs/frontend-enviar.md).
 
 ## Ingestão local (fatia vertical)
 O comando compila uma fonte local sobre uma **cópia temporária** do repositório,
