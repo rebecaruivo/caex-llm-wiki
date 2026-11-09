@@ -30,6 +30,7 @@ A API está publicada em [caex-llm-wiki.vercel.app/docs](https://caex-llm-wiki.v
 | `/api/enviar/config` | GET | Estado público do formulário: aberto, Turnstile, limite e tipos |
 | `/api/enviar` | POST | Recebe uma fonte e cria o job em `na_fila` |
 | `/api/ingest/{uuid}` | GET | Andamento público do envio (60 consultas/min por IP) |
+| `/api/ingest/manutencao` | GET | Manutenção diária; exige `Authorization: Bearer $CRON_SECRET` |
 
 ```bash
 curl -X POST https://caex-llm-wiki.vercel.app/api/perguntar \
@@ -71,16 +72,24 @@ Fontes -> Compilador -> Validador -> Revisão humana -> Wiki -> Oráculo -> Usu�
 | `evals/ingest/` | Fixtures I01–I14 do ingest, com resultado e critérios |
 | `config_ingestao.py` | Constantes, switches e regexes da ingestão |
 | `ingerir.py` | Núcleo do compilador, triagem, substituição de nomes e publicação |
+| `notificacoes.py` | Notificação best-effort para o webhook da gestão |
+| `github_ingest.py` | Consulta pública de PR para reconciliar locks antigos |
+| `reconciliacao.py` | Fechamento do job no merge/close do PR |
 | `tests/` | Suíte determinística com `unittest`, sem rede |
 | `tools/lint_wiki.py` | Validador automático |
 | `tools/compilar_local.py` | Fatia vertical: fonte → compilador → lint → diff |
 | `tools/triar_local.py` | Triagem local: pré-filtro, classificador e nomes |
 | `tools/run_evals_ingest.py` | Evals ao vivo do ingest e escolha do modelo |
-| `tools/ingerir.py` | Publicação: triagem → compilador → fonte derivada → manifesto → lint → PR |
+| `tools/ingerir.py` | Worker (`job_id`) e publicação local: triagem → compilador → fonte derivada → manifesto → lint → PR |
+| `tools/ingest_pr_fechado.py` | Reconcilia o job quando um PR `ingest/...` fecha |
+| `.github/workflows/` | Worker, fechamento do PR e testes/lint |
+| `vercel.json` | Cron diário da manutenção (`0 6 * * *`) |
+| `docs/operacao-ingest.md` | Operação, recuperação manual e notificações |
 
 ## Como usar
 ```bash
 python3 tools/lint_wiki.py
+python3 -m unittest discover -s tests
 ```
 
 No Windows, use `python tools/lint_wiki.py`. Os testes usam só a biblioteca padrão do Python.
@@ -107,8 +116,9 @@ a capacidade de acompanhamento e nunca aparece em branch, commit, PR, log ou
 notificação.
 
 `talvez_avancar_fila()` pega o job `na_fila` mais antigo, toma o lock de 30
-segundos, dispara `ingerir.yml` com `GITHUB_DISPATCH_TOKEN` e, em falha,
-incrementa `falhas_dispatch`. Depois de `MAX_FALHAS_DISPATCH`, o job vira
+segundos, dispara `ingerir.yml` com `GITHUB_DISPATCH_TOKEN` (ou com o
+`GITHUB_TOKEN` efêmero no fechamento do PR) e, em falha, incrementa
+`falhas_dispatch`. Depois de `MAX_FALHAS_DISPATCH`, o job vira
 `falhou`/`dispatch`, o lock é liberado e a gestão é avisada. Nenhuma mensagem
 de erro inclui o token, o UUID ou o texto da fonte.
 
@@ -301,6 +311,25 @@ o original permanece no Supabase até o TTL. Páginas tocadas voltam a
 
 Códigos de saída: `0` publicado ou sem mudanças, `1` quarentena e `2` falha ou
 entrada inválida.
+
+## Automação, manutenção e notificações
+O worker roda só por `workflow_dispatch` com o UUID do job; o fechamento de PR
+só age em branches `ingest/...` do próprio repositório; nenhum workflow usa
+`pull_request_target`. O CI roda `unittest` e `tools/lint_wiki.py` em push e
+pull request, sem secrets.
+
+A manutenção diária fica em `GET /api/ingest/manutencao`, protegida por
+`Authorization: Bearer $CRON_SECRET` e agendada em `vercel.json` às 06:00. Ela
+executa sete passos idempotentes: TTL de 30 dias do original e dos nomes,
+limpeza de limites, retenção de 90 dias, timeout de 15 minutos, lock órfão,
+reconciliação de lock antigo pelo PR público e avanço da fila. Falha de GitHub
+fica para a próxima execução.
+
+As notificações usam um único webhook, com `X-Webhook-Secret` quando
+configurado, uma tentativa extra e nunca derrubam o job. Os eventos são
+`pr_aberto`, `quarentena`, `falhou` e `lock_antigo`; o payload não tem UUID,
+texto bruto nem nomes. Detalhes de operação e recuperação manual estão em
+[`docs/operacao-ingest.md`](docs/operacao-ingest.md).
 
 ## Próximos passos
 1. Rodar os testes e publicar a taxa de acerto.
