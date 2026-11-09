@@ -333,6 +333,57 @@ class CorpoPrTest(unittest.TestCase):
         self.assertNotIn("Rosa", corpo)
 
 
+class DuplicataProximaTest(PublicacaoBase):
+    def test_mesmo_tipo_data_titulo_recebe_label_e_checklist(self):
+        manifesto = json.loads(
+            (self.raiz / "sources/manifest.json").read_text(encoding="utf-8")
+        )
+        arquivo = self.raiz / "sources/atas/ATA-2030-04-10-AAAAAA.md"
+        arquivo.write_text("# Ata\n", encoding="utf-8")
+        manifesto["fontes"].append({
+            "id": "ATA-2030-04-10-AAAAAA",
+            "titulo": fonte()["titulo"],
+            "tipo": "ata",
+            "autoridade": "ca-deliberativa",
+            "data": fonte()["data"],
+            "arquivo": "sources/atas/ATA-2030-04-10-AAAAAA.md",
+            "uso": "wiki",
+            "hash": "b" * 64,
+        })
+        (self.raiz / "sources/manifest.json").write_text(
+            json.dumps(manifesto), encoding="utf-8"
+        )
+
+        resultado = self.publicar()
+
+        self.assertEqual(resultado["status"], "aguardando_revisao")
+        self.assertIn("possivel-duplicata", resultado["pr"]["labels"])
+        self.assertIn("possível duplicata", resultado["pr"]["corpo"])
+        self.assertIn("possivel-duplicata", self.gh.chamadas[0])
+
+    def test_texto_igual_nao_marca_duplicata_proxima(self):
+        manifesto = json.loads(
+            (self.raiz / "sources/manifest.json").read_text(encoding="utf-8")
+        )
+        arquivo = self.raiz / "sources/atas/ATA-2030-04-10-BBBBBB.md"
+        arquivo.write_text("# Ata\n", encoding="utf-8")
+        manifesto["fontes"].append({
+            "id": "ATA-2030-04-10-BBBBBB",
+            "titulo": fonte()["titulo"],
+            "tipo": "ata",
+            "autoridade": "ca-deliberativa",
+            "data": fonte()["data"],
+            "arquivo": "sources/atas/ATA-2030-04-10-BBBBBB.md",
+            "uso": "wiki",
+            "hash": ingerir.hash_conteudo(fonte()["texto"]),
+        })
+        (self.raiz / "sources/manifest.json").write_text(
+            json.dumps(manifesto), encoding="utf-8"
+        )
+        resultado = self.publicar()
+        self.assertNotIn("possivel-duplicata", resultado["pr"]["labels"])
+
+
 class AbrirPrTest(PublicacaoBase):
     def test_branch_commit_e_titulo_sem_nomes(self):
         resultado = ingerir.publicar(
@@ -354,6 +405,60 @@ class AbrirPrTest(PublicacaoBase):
         corpo = self.gh.chamadas[0][self.gh.chamadas[0].index("--body") + 1]
         self.assertNotIn("Rosa", corpo)
         self.assertNotIn(fonte()["texto"], corpo)
+
+    def test_falha_de_push_vira_falhou_infra_e_nao_abre_pr(self):
+        def git(argumentos, raiz):
+            if argumentos[:1] == ["push"]:
+                raise ingerir.ErroPublicacao("push falhou")
+            return ""
+
+        resultado = self.publicar(git=git)
+        self.assertEqual(resultado["status"], "falhou")
+        self.assertEqual(resultado["motivo"], "infra")
+        self.assertEqual(self.gh.chamadas, [])
+        self.assertEqual(
+            list((self.raiz / "sources/atas").glob("ATA-2030-04-10-*")), []
+        )
+
+    def test_push_do_branch_acontece_antes_do_gh_pr_create(self):
+        ordem = []
+
+        def git(argumentos, raiz):
+            ordem.append(("git", list(argumentos)))
+            return ""
+
+        def gh(argumentos, raiz):
+            ordem.append(("gh", list(argumentos)))
+            return "https://github.com/exemplo/repo/pull/12\n"
+
+        resultado = self.publicar(git=git, gh=gh)
+        sid = resultado["source_id"]
+        indice_push = ordem.index(("git", ["push", "-u", "origin", f"ingest/{sid}"]))
+        indice_gh = next(i for i, (tipo, _) in enumerate(ordem) if tipo == "gh")
+        self.assertLess(indice_push, indice_gh)
+
+
+class FalhaDePrLimpaRepositorioTest(PublicacaoBase):
+    def test_falha_ao_criar_pr_restaura_wiki_manifesto_e_derivado(self):
+        manifesto_antes = (self.raiz / "sources/manifest.json").read_text(encoding="utf-8")
+        pagina = self.raiz / "wiki/processos/exemplo.md"
+        pagina_antes = pagina.read_text(encoding="utf-8")
+
+        def gh_falha(argumentos, raiz):
+            raise ingerir.ErroPublicacao("gh pr create falhou")
+
+        resultado = self.publicar(gh=gh_falha)
+
+        self.assertEqual(resultado["status"], "falhou")
+        self.assertEqual(resultado["motivo"], "infra")
+        self.assertEqual(
+            (self.raiz / "sources/manifest.json").read_text(encoding="utf-8"),
+            manifesto_antes,
+        )
+        self.assertEqual(pagina.read_text(encoding="utf-8"), pagina_antes)
+        self.assertEqual(
+            list((self.raiz / "sources/atas").glob("ATA-2030-04-10-*")), []
+        )
 
 
 class CliPublicacaoTest(PublicacaoBase):

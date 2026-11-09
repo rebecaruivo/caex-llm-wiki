@@ -63,6 +63,49 @@ def _ler_resposta(resposta):
     return texto, resposta.headers
 
 
+_CODIGO_ERRO = re.compile(r'"code"\s*:\s*"([0-9A-Z]+)"')
+_RESTRICAO_ERRO = re.compile(r'constraint "([^"]+)"')
+
+
+def _erro_http(erro):
+    """Resume o erro do Supabase sem corpo, sem linha e sem PII.
+
+    Mantém apenas o status HTTP, o código do Postgres e o nome da restrição;
+    o corpo pode ecoar a linha rejeitada (título ou texto bruto), então nunca
+    entra na mensagem.
+    """
+    corpo = ""
+    try:
+        corpo = erro.read().decode("utf-8", "replace")[:2000]
+    except Exception:  # noqa: BLE001 - corpo ausente não muda a falha
+        corpo = ""
+    codigo = restricao = None
+    try:
+        dados = json.loads(corpo)
+    except (json.JSONDecodeError, TypeError):
+        dados = None
+    if isinstance(dados, dict):
+        codigo = str(dados.get("code") or "") or None
+        mensagem = str(dados.get("message") or "")
+        achado = _RESTRICAO_ERRO.search(mensagem)
+        if achado:
+            restricao = achado.group(1)
+    if codigo is None:
+        achado = _CODIGO_ERRO.search(corpo)
+        if achado:
+            codigo = achado.group(1)
+    if restricao is None:
+        achado = _RESTRICAO_ERRO.search(corpo)
+        if achado:
+            restricao = achado.group(1)
+    partes = [f"Supabase respondeu {erro.code}"]
+    if codigo:
+        partes.append(f"código {codigo}")
+    if restricao:
+        partes.append(f"restrição {restricao}")
+    return ErroBanco(", ".join(partes))
+
+
 def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None, contar=False):
     """Faz uma chamada à API REST do Supabase e devolve o JSON da resposta."""
     base, cabecalhos = _base_e_cabecalhos()
@@ -92,11 +135,11 @@ def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None
                 # Formato: "0-0/123" (ou "*/0" quando não há linhas).
                 return int(cabecalhos_resposta.get("Content-Range", "*/0").split("/")[-1])
     except urllib.error.HTTPError as erro:
-        detalhe = erro.read().decode("utf-8", "replace")[:500]
-        if '"23503"' in detalhe:
+        falha = _erro_http(erro)
+        if "23503" in str(falha):
             # Código do Postgres para "aponta para um chat que não existe".
             raise ChatNaoEncontrado("Chat não encontrado.") from erro
-        raise ErroBanco(f"Supabase respondeu {erro.code}: {detalhe}") from erro
+        raise falha from erro
     except (urllib.error.URLError, TimeoutError) as erro:
         raise ErroBanco(f"Sem conexão com o Supabase: {erro}") from erro
     return json.loads(texto) if texto else None
@@ -112,8 +155,7 @@ def _rpc(funcao, corpo=None):
         with _abrir(pedido) as resposta:
             texto, _ = _ler_resposta(resposta)
     except urllib.error.HTTPError as erro:
-        detalhe = erro.read().decode("utf-8", "replace")[:500]
-        raise ErroBanco(f"Supabase respondeu {erro.code}: {detalhe}") from erro
+        raise _erro_http(erro) from erro
     except (urllib.error.URLError, TimeoutError) as erro:
         raise ErroBanco(f"Sem conexão com o Supabase: {erro}") from erro
     return json.loads(texto) if texto else None
@@ -261,8 +303,8 @@ def _hash_valido(hash_):
     return str(hash_)
 
 
-def _filtro_status(statuss):
-    return "in.(" + ",".join(statuss) + ")"
+def _filtro_status(status):
+    return "in.(" + ",".join(status) + ")"
 
 
 def criar_job_ingest(dados):
@@ -295,11 +337,11 @@ def buscar_job_ingest(job_id):
     return linhas[0] if linhas else None
 
 
-def buscar_job_bloqueante_por_hash(hash_, statuss):
+def buscar_job_bloqueante_por_hash(hash_, status):
     """Primeiro job bloqueante com este hash, ou None."""
     linhas = _pedir("GET", "ingest_jobs", {
         "hash_conteudo": f"eq.{_hash_valido(hash_)}",
-        "status": _filtro_status(statuss),
+        "status": _filtro_status(status),
         "select": "id,source_id,status",
         "order": "criado_em.asc",
         "limit": "1",
@@ -334,19 +376,23 @@ def listar_source_ids_ingest():
     return [linha["source_id"] for linha in linhas or []]
 
 
+def buscar_jobs_duplicata_proxima(tipo, data_documento, titulo, hash_):
+    """Jobs com mesmo tipo, data e título, mas texto (hash) diferente."""
+    return _pedir("GET", "ingest_jobs", {
+        "tipo": f"eq.{tipo}",
+        "data_documento": f"eq.{data_documento}",
+        "titulo": f"eq.{titulo}",
+        "hash_conteudo": f"neq.{_hash_valido(hash_)}",
+        "select": "id,source_id,tipo,data_documento,titulo,hash_conteudo,status",
+        "limit": "1",
+    }) or []
+
+
 def contar_jobs_na_fila_antes(criado_em):
     """Quantos jobs `na_fila` são mais antigos que o instante informado."""
     return _pedir("GET", "ingest_jobs", {
         "status": "eq.na_fila",
         "criado_em": f"lt.{criado_em}",
-        "select": "id",
-    }, contar=True)
-
-
-def contar_jobs_por_status(statuss):
-    """Conta jobs nos estados informados. Usado por métricas e manutenção."""
-    return _pedir("GET", "ingest_jobs", {
-        "status": _filtro_status(statuss),
         "select": "id",
     }, contar=True)
 
@@ -420,6 +466,11 @@ def consumir_global(chave, dia, limite, expira_em):
     }))
 
 
+def devolver_global(chave, dia):
+    """Devolve uma unidade do limite global quando o job não foi criado."""
+    return _valor_rpc(_rpc("devolver_global", {"p_chave": chave, "p_dia": dia}))
+
+
 def consumir_status(chave, dia, limite, expira_em):
     """Consome uma consulta de andamento (60 por minuto por IP)."""
     return _valor_rpc(_rpc("consumir_limite", {
@@ -474,10 +525,10 @@ def limpar_limites_expirados(agora_iso):
     _pedir("DELETE", "limites_ingest", {"expira_em": f"lt.{agora_iso}"})
 
 
-def listar_jobs_terminais_antigos(limite_iso, statuss):
+def listar_jobs_terminais_antigos(limite_iso, status):
     """Jobs em estado terminal parados desde antes de `limite_iso`."""
     return _pedir("GET", "ingest_jobs", {
-        "status": _filtro_status(statuss),
+        "status": _filtro_status(status),
         "atualizado_em": f"lt.{limite_iso}",
         "select": "id,source_id,status",
     }) or []

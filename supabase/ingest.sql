@@ -148,3 +148,13 @@ create or replace function consumir_global(
 ) returns int language sql as $$
   select consumir_limite(p_chave, p_dia, p_limite, p_expira_em);
 $$;
+
+-- Compensa o limite global quando o job não chega a ser criado (falha ou
+-- corrida de duplicata). Nunca deixa a contagem negativa.
+create or replace function devolver_global(p_chave text, p_dia date)
+returns int language sql as $$
+  update limites_ingest
+     set contagem = greatest(contagem - 1, 0)
+   where chave = p_chave and dia = p_dia
+  returning contagem;
+$$;

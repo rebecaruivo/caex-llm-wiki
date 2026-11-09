@@ -26,7 +26,8 @@ Regras de segurança verificadas pela suíte:
   `GITHUB_DISPATCH_TOKEN` da Vercel.
 
 O `MODELO_INGEST` é constante em `config_ingestao.py`; nenhum workflow lê
-variável de repositório.
+variável de repositório. A escolha com evidência ao vivo está em
+`docs/modelo-ingest.md`.
 
 ## Fechamento do PR
 

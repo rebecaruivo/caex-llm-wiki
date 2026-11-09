@@ -15,15 +15,16 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
+import config_ingestao  # noqa: E402
 import db  # noqa: E402
 import reconciliacao  # noqa: E402
+import tempo  # noqa: E402
 from app import talvez_avancar_fila  # noqa: E402
 
 
@@ -32,11 +33,11 @@ class ErroEvento(ValueError):
 
 
 def _agora():
-    return datetime.now(timezone.utc)
+    return tempo.agora()
 
 
 def _iso(momento):
-    return momento.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return tempo.iso_utc(momento)
 
 
 def carregar_evento(caminho=None):
@@ -78,16 +79,12 @@ def executar(evento, *, repositorio=None, db_mod=None, avancar=None, agora=None)
     """Reconcilia o job do PR fechado e, depois de liberar o lock, avança a fila."""
     dados = validar_evento(evento, repositorio)
     db_mod = db_mod or db
-    momento = agora() if callable(agora) else (agora or _agora())
-    if isinstance(momento, str):
-        momento = datetime.fromisoformat(momento.strip().replace("Z", "+00:00"))
-    if momento.tzinfo is None:
-        momento = momento.replace(tzinfo=timezone.utc)
+    momento = tempo.como_datetime(agora() if callable(agora) else agora)
 
     job = db_mod.buscar_job_por_branch(dados["branch"])
     if not job:
         return {"status": "ignorado", "motivo": "job_ausente"}
-    if job.get("status") in ("publicado", "fechado_sem_merge", "sem_mudancas", "quarentena", "falhou", "expirado"):
+    if job.get("status") in config_ingestao.STATUS_TERMINAIS:
         return {"status": "ignorado", "motivo": "ja_terminal"}
     if job.get("pr_numero") not in (None, dados["numero"]):
         return {"status": "ignorado", "motivo": "pr_divergente"}

@@ -94,15 +94,25 @@ def notificar(payload, *, url=None, secret=None, abrir=None):
     return False
 
 
-def evento_job(evento, job, *, paginas=None, pr_url=None):
-    """Atalho para montar um payload a partir da linha do job."""
-    return montar_payload(
+def notificar_job(enviar, evento, job, *, paginas=None, pr_url=None, status=None):
+    """Monta o payload a partir do job e chama `enviar` sem derrubar o fluxo.
+
+    `enviar` recebe apenas o payload seguro. Exceções são engolidas: a
+    notificação é sempre best-effort, como em `notificar`.
+    """
+    if enviar is None:
+        return False
+    payload = montar_payload(
         evento,
         source_id=job.get("source_id"),
-        status=job.get("status"),
+        status=status or job.get("status"),
         motivo=job.get("motivo"),
         pr_url=pr_url if pr_url is not None else job.get("pr_url"),
         paginas=paginas,
         criado_em=job.get("criado_em"),
         atualizado_em=job.get("atualizado_em"),
     )
+    try:
+        return bool(enviar(payload))
+    except Exception:  # noqa: BLE001 - notificação nunca derruba o job
+        return False

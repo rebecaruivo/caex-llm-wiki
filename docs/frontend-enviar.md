@@ -19,7 +19,9 @@ mostra o formulário em `/enviar` e o andamento em `/enviar/<uuid>`.
 `GET /api/enviar/config` decide o estado da página. Com `aberto: false`, a
 página mostra “Envio fechado para testes.” e mantém o formulário escondido.
 Com `aberto: true`, o formulário aparece e a página renderiza o widget
-invisível do Turnstile usando `turnstile_site_key`.
+invisível do Turnstile usando `turnstile_site_key`. O servidor só devolve
+`aberto: true` quando `INGEST_ABERTO=true` e as duas chaves do Turnstile
+existem, então a página nunca oferece um formulário que a API recusaria.
 
 ## Turnstile e abertura segura
 

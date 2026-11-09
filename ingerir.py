@@ -14,7 +14,8 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import date, timedelta
 from pathlib import Path
 
 from config_ingestao import (  # noqa: F401  (re-exportado para consumidores)
@@ -30,6 +31,8 @@ from config_ingestao import (  # noqa: F401  (re-exportado para consumidores)
     RETENCAO_BRUTO_DIAS,
     TIPOS,
 )
+
+import tempo
 
 ROOT = Path(__file__).resolve().parent
 BASE_URL = os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
@@ -414,6 +417,19 @@ def _nomes_ordenados(nomes):
     return sorted(limpos, key=len, reverse=True)
 
 
+def remover_nomes(texto, nomes=None):
+    """Troca nomes por `[nome removido]`, sem caixa e por palavra inteira.
+
+    É o único ponto de substituição de nomes em texto gerado. Os chamadores
+    decidem se querem colapsar espaços antes ou depois.
+    """
+    texto = str(texto or "")
+    for nome in _nomes_ordenados(nomes):
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
+    return texto
+
+
 def _substituir_com_contagem(texto, nomes):
     total = 0
     for nome in _nomes_ordenados(nomes):
@@ -759,9 +775,7 @@ def _limpar_titulo(titulo, nomes):
     titulo = str(titulo or "").strip()
     if not titulo:
         raise ErroOperacao("criar_pagina sem 'titulo'")
-    for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        titulo = re.sub(padrao, MARCADOR_NOME, titulo, flags=re.IGNORECASE)
+    titulo = remover_nomes(titulo, nomes)
     titulo = re.sub(r"\s+", " ", titulo).strip()
     if not titulo:
         raise ErroOperacao("título da página nova ficou vazio")
@@ -1487,31 +1501,60 @@ CHECKLIST_GESTAO = (
 
 def _como_datetime(agora):
     """Resolve o relógio injetável para um `datetime` UTC."""
-    valor = agora() if callable(agora) else agora
-    if valor is None:
-        return datetime.now(timezone.utc)
-    if isinstance(valor, str):
-        texto = valor.strip().replace("Z", "+00:00")
-        valor = datetime.fromisoformat(texto)
-    if not isinstance(valor, datetime):
-        raise ErroPublicacao("relógio inválido: use datetime ou texto ISO")
-    if valor.tzinfo is None:
-        valor = valor.replace(tzinfo=timezone.utc)
-    return valor.astimezone(timezone.utc)
+    try:
+        return tempo.como_datetime(agora() if callable(agora) else agora)
+    except (TypeError, ValueError) as erro:
+        raise ErroPublicacao("relógio inválido: use datetime ou texto ISO") from erro
 
 
 def _iso_utc(valor):
-    return _como_datetime(valor).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return tempo.iso_utc(_como_datetime(valor))
 
 
 def sanitizar_titulo(titulo, nomes=None):
     """Remove nomes do título público, sem caixa e por palavra inteira."""
-    texto = str(titulo or "").strip()
-    for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
+    texto = remover_nomes(str(titulo or "").strip(), nomes)
     texto = re.sub(r"\s+", " ", texto).strip()
     return texto or "Fonte sem título"
+
+
+def _normalizar_duplicata(valor):
+    return re.sub(r"\s+", " ", str(valor or "").strip()).casefold()
+
+
+def detectar_duplicata_proxima(fonte, *, source_id=None, manifesto=None, jobs=None):
+    """Mesmo tipo, data e título com texto diferente é duplicata próxima.
+
+    A duplicata exata já é recusada na API. Aqui só sinalizamos o caso que a
+    gestão precisa conferir, olhando o manifesto e os jobs já existentes.
+    """
+    tipo = fonte.get("tipo")
+    data = str(fonte.get("data") or "")[:10]
+    titulo = _normalizar_duplicata(fonte.get("titulo"))
+    hash_ = hash_conteudo(fonte.get("texto") or "")
+    for item in (manifesto or {}).get("fontes", []):
+        if source_id and str(item.get("id")) == str(source_id):
+            continue
+        if item.get("tipo") != tipo or str(item.get("data") or "")[:10] != data:
+            continue
+        if _normalizar_duplicata(item.get("titulo")) != titulo:
+            continue
+        if item.get("hash") and item.get("hash") == hash_:
+            continue
+        return True
+    for item in jobs or []:
+        if source_id and str(item.get("source_id")) == str(source_id):
+            continue
+        if item.get("tipo") != tipo:
+            continue
+        if str(item.get("data_documento") or "")[:10] != data:
+            continue
+        if _normalizar_duplicata(item.get("titulo")) != titulo:
+            continue
+        if item.get("hash_conteudo") == hash_:
+            continue
+        return True
+    return False
 
 
 def fonte_derivada(texto, nomes=None):
@@ -1607,11 +1650,7 @@ def preparar_publicacao(
 
 def _texto_seguro(valor, nomes=None):
     """Normaliza um texto para o corpo do PR e remove nomes por segurança."""
-    texto = " ".join(str(valor or "").split())
-    for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
-    return texto
+    return remover_nomes(" ".join(str(valor or "").split()), nomes)
 
 
 def _itens_texto(itens, nomes=None):
@@ -1805,24 +1844,43 @@ def abrir_pr(
     titulo_pr = f"Ingest {source_id}: {titulo_fonte}"
     rotulos = list(labels or ["ingest", "precisa-verificacao"])
 
-    git(["checkout", "-B", branch], raiz)
-    git(["add", "--all"], raiz)
-    git(["commit", "-m", mensagem], raiz)
-    argumentos_gh = [
-        "pr",
-        "create",
-        "--title",
-        titulo_pr,
-        "--body",
-        corpo,
-        "--base",
-        "main",
-        "--head",
-        branch,
-    ]
-    for rotulo in rotulos:
-        argumentos_gh.extend(["--label", rotulo])
-    saida = gh(argumentos_gh, raiz)
+    trocou_branch = commit_feito = False
+    try:
+        git(["checkout", "-B", branch], raiz)
+        trocou_branch = True
+        git(["add", "--all"], raiz)
+        git(["commit", "-m", mensagem], raiz)
+        commit_feito = True
+        git(["push", "-u", "origin", branch], raiz)
+        argumentos_gh = [
+            "pr",
+            "create",
+            "--title",
+            titulo_pr,
+            "--body",
+            corpo,
+            "--base",
+            "main",
+            "--head",
+            branch,
+        ]
+        for rotulo in rotulos:
+            argumentos_gh.extend(["--label", rotulo])
+        saida = gh(argumentos_gh, raiz)
+    except Exception:
+        # Best-effort: desfaz o commit local e volta ao branch anterior para
+        # que uma falha de push/PR não deixe o repositório sujo.
+        if commit_feito:
+            try:
+                git(["reset", "--hard", "HEAD~1"], raiz)
+            except Exception:  # noqa: BLE001 - preserva o erro original
+                pass
+        if trocou_branch:
+            try:
+                git(["checkout", "-"], raiz)
+            except Exception:  # noqa: BLE001 - preserva o erro original
+                pass
+        raise
     url = next(
         (linha.strip() for linha in str(saida).splitlines() if linha.strip().startswith("http")),
         str(saida).strip(),
@@ -1837,7 +1895,12 @@ def abrir_pr(
     }
 
 
-def _ids_existentes(raiz, existentes=None):
+def _ids_existentes(raiz, existentes: Iterable[str] | None = None) -> set[str]:
+    """IDs já usados no manifesto e nos `existentes` informados.
+
+    O contrato é uma coleção de `source_id` (texto). Formatos antigos com
+    dicionários ou linhas de job continuam aceitos por compatibilidade.
+    """
     ids = {item["id"] for item in carregar_manifesto(raiz).get("fontes", [])}
     for item in existentes or []:
         if isinstance(item, str):
@@ -1906,7 +1969,8 @@ def publicar(
     atualizar_status=None,
     notificar=None,
     max_tentativas=MAX_TENTATIVAS,
-    possivel_duplicata=False,
+    possivel_duplicata=None,
+    jobs=None,
 ):
     """Compila, grava a fonte derivada, roda o lint e abre o PR.
 
@@ -1954,6 +2018,17 @@ def publicar(
         or fonte_derivada(fonte["texto"], nomes)
     )
     hash_ = hash_conteudo(fonte["texto"])
+    if possivel_duplicata is None:
+        try:
+            manifesto_atual = carregar_manifesto(raiz)
+        except (OSError, ValueError, KeyError):
+            manifesto_atual = None
+        possivel_duplicata = detectar_duplicata_proxima(
+            fonte,
+            source_id=source_id,
+            manifesto=manifesto_atual,
+            jobs=jobs,
+        )
     snapshot_wiki = _snapshot_wiki(raiz)
     manifesto_original = (raiz / "sources/manifest.json").read_text(encoding="utf-8")
 
@@ -2074,6 +2149,9 @@ def publicar(
             gh=gh,
         )
     except ErroPublicacao as erro:
+        _restaurar_publicacao(
+            raiz, snapshot_wiki, manifesto_original, publicacao["arquivo"]
+        )
         _emitir_resultado(
             "falhou",
             "infra",
@@ -2090,6 +2168,11 @@ def publicar(
             "erros": [str(erro)],
             "pr": None,
         }
+    except Exception:
+        _restaurar_publicacao(
+            raiz, snapshot_wiki, manifesto_original, publicacao["arquivo"]
+        )
+        raise
 
     _emitir_resultado(
         "aguardando_revisao",

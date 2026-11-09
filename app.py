@@ -19,10 +19,13 @@ from pydantic import BaseModel, Field
 
 import config_ingestao
 import db
+import fila_ingest
 import github_ingest
 import ingerir
 import notificacoes
 import reconciliacao
+import tempo
+from fila_ingest import ErroDispatch
 from tools.lint_wiki import revisar
 from oraculo import (
     MODELO_PADRAO, ErroApi, carregar_env, carregar_prompt, chave_cache, montar_wiki,
@@ -346,17 +349,13 @@ ETAPAS = {
 }
 
 
-class ErroDispatch(Exception):
-    """Falha curta ao disparar o worker; nunca guarda o token."""
-
-
 def _agora():
     """Relógio UTC injetável nos testes."""
-    return datetime.now(timezone.utc)
+    return tempo.agora()
 
 
 def _iso(momento):
-    return momento.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return tempo.iso_utc(momento)
 
 
 def _dia_fuso(momento):
@@ -392,6 +391,14 @@ def _chave_global(dia):
     return f"global:{dia.isoformat()}"
 
 
+def _devolver_global_seguro(chave, dia):
+    """Compensa o limite global quando o job não chega a ser criado."""
+    try:
+        db.devolver_global(chave, dia)
+    except Exception as erro:  # noqa: BLE001 - compensação é best-effort
+        print(f"Falha ao devolver limite global: {type(erro).__name__}", flush=True)
+
+
 def _chave_status(ip, momento):
     local = momento.astimezone(ZoneInfo(config_ingestao.FUSO))
     return f"status:{_hmac_ip(ip)}:{local.strftime('%Y-%m-%d-%H-%M')}"
@@ -421,40 +428,24 @@ def verificar_turnstile(token, ip, secret=None):
         return False
 
 
-def _repositorio_github():
-    if os.environ.get("GITHUB_REPOSITORY"):
-        return os.environ["GITHUB_REPOSITORY"]
-    url = os.environ.get("REPOSITORIO_URL", "https://github.com/rebecaruivo/caex-llm-wiki/blob/main")
-    partes = [parte for parte in urllib.parse.urlparse(url).path.split("/") if parte]
-    if len(partes) >= 2:
-        return "/".join(partes[:2])
-    return "rebecaruivo/caex-llm-wiki"
+def repositorio_github():
+    """`owner/repo` compartilhado com `github_ingest`."""
+    return github_ingest.repositorio()
 
 
 def disparar_worker(job_id):
     """Dispara `ingerir.yml` via GitHub Actions. Sem token, falha curta."""
-    token = os.environ.get("GITHUB_DISPATCH_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
-    if not token:
-        raise ErroDispatch("token de dispatch ausente")
-    corpo = json.dumps({"ref": "main", "inputs": {"job_id": str(job_id)}}).encode("utf-8")
-    pedido = urllib.request.Request(
-        f"https://api.github.com/repos/{_repositorio_github()}/actions/workflows/ingerir.yml/dispatches",
-        data=corpo,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+    return fila_ingest.disparar_worker(job_id, repositorio=repositorio_github())
+
+
+def talvez_avancar_fila(*, disparar=None, agora=None, notificar=None):
+    """Avança a fila usando o banco, o relógio e o disparo deste módulo."""
+    return fila_ingest.talvez_avancar_fila(
+        disparar=disparar or disparar_worker,
+        agora=agora or _agora,
+        db_mod=db,
+        notificar=notificar if notificar is not None else notificacoes.notificar,
     )
-    try:
-        with urllib.request.urlopen(pedido, timeout=10):
-            return True
-    except urllib.error.HTTPError as erro:
-        raise ErroDispatch(f"GitHub respondeu {erro.code}") from None
-    except (urllib.error.URLError, TimeoutError):
-        raise ErroDispatch("sem conexão com o GitHub") from None
 
 
 def _duplicata_manifesto(hash_):
@@ -522,14 +513,9 @@ def _job_publico(job, posicao):
     }
 
 
-def _fonte_completa(ids_manifesto):
-    """IDs existentes no manifesto, sem quebrar quando ele não está disponível."""
-    return set(ids_manifesto or [])
-
-
 def _criar_job_na_fila(tipo, titulo, data_documento, texto, hash_):
     """Gera `source_id`, cria o job e resolve colisão/ corrida de hash."""
-    existentes = _fonte_completa(_ids_manifesto_seguro())
+    existentes = set(_ids_manifesto_seguro() or [])
     try:
         existentes.update(db.listar_source_ids_ingest())
     except db.ErroBanco as erro:
@@ -660,8 +646,9 @@ def _processar_envio(dados, request):
 
     # 7. Limite global (só chega aqui quem passou por todas as rejeições).
     try:
+        chave_global = _chave_global(dia)
         restante_global = db.consumir_global(
-            _chave_global(dia), dia, config_ingestao.INGEST_MAX_DIA, _expira(momento, dias=1)
+            chave_global, dia, config_ingestao.INGEST_MAX_DIA, _expira(momento, dias=1)
         )
     except db.ErroBanco as erro:
         print(f"Falha ao consumir limite global: {erro}", flush=True)
@@ -669,13 +656,19 @@ def _processar_envio(dados, request):
     if restante_global is None:
         raise HTTPException(status_code=429, detail="A fila de envios está cheia hoje. Tente novamente amanhã.")
 
-    # 8. Criação do job em na_fila.
+    # 8. Criação do job em na_fila. O limite global só conta jobs criados.
+    chave_global = _chave_global(dia)
     try:
         job = _criar_job_na_fila(tipo, titulo, data_documento, texto, hash_)
+    except HTTPException:
+        _devolver_global_seguro(chave_global, dia)
+        raise
     except db.ErroBanco as erro:
+        _devolver_global_seguro(chave_global, dia)
         print(f"Falha ao criar job de ingestão: {erro}", flush=True)
         raise HTTPException(status_code=503, detail="Não foi possível registrar o envio agora.") from erro
     if not job:
+        _devolver_global_seguro(chave_global, dia)
         raise HTTPException(status_code=503, detail="Não foi possível registrar o envio agora.")
 
     posicao = _posicao_fila(job)
@@ -696,10 +689,12 @@ def _processar_envio(dados, request):
 
 @app.get("/api/enviar/config")
 def config_enviar():
-    """Estado público do formulário de envio."""
+    """Estado público do formulário; aberto só quando o envio pode aceitar."""
+    site_key = os.environ.get("TURNSTILE_SITE_KEY", "")
+    secret_key = os.environ.get("TURNSTILE_SECRET_KEY", "")
     return {
-        "aberto": bool(config_ingestao.INGEST_ABERTO),
-        "turnstile_site_key": os.environ.get("TURNSTILE_SITE_KEY", ""),
+        "aberto": bool(config_ingestao.INGEST_ABERTO and site_key and secret_key),
+        "turnstile_site_key": site_key,
         "max_bytes": config_ingestao.MAX_BYTES,
         "tipos": [
             {"valor": valor, "rotulo": ROTULOS_TIPO[valor]}
@@ -800,18 +795,7 @@ def _exigir_cron(request):
 
 def _instante(valor):
     """Converte datetime ou texto ISO em datetime UTC, ou None."""
-    if isinstance(valor, datetime):
-        momento = valor
-    elif isinstance(valor, str) and valor.strip():
-        try:
-            momento = datetime.fromisoformat(valor.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        return None
-    if momento.tzinfo is None:
-        momento = momento.replace(tzinfo=timezone.utc)
-    return momento.astimezone(timezone.utc)
+    return tempo.instante(valor)
 
 
 def _mais_antigo_que(valor, momento, *, dias=0, minutos=0):
@@ -819,25 +803,6 @@ def _mais_antigo_que(valor, momento, *, dias=0, minutos=0):
     if instante is None:
         return True
     return instante < momento - timedelta(days=dias, minutes=minutos)
-
-
-def _notificar_seguro(notificar, evento, job, *, paginas=None, pr_url=None, status=None):
-    if notificar is None:
-        return
-    payload = notificacoes.montar_payload(
-        evento,
-        source_id=job.get("source_id"),
-        status=status or job.get("status"),
-        motivo=job.get("motivo"),
-        pr_url=pr_url if pr_url is not None else job.get("pr_url"),
-        paginas=paginas,
-        criado_em=job.get("criado_em"),
-        atualizado_em=job.get("atualizado_em"),
-    )
-    try:
-        notificar(payload)
-    except Exception:  # noqa: BLE001 - notificação nunca derruba a manutenção
-        pass
 
 
 def _falhar_manutencao(db_mod, job, motivo, agora, notificar):
@@ -853,7 +818,7 @@ def _falhar_manutencao(db_mod, job, motivo, agora, notificar):
         db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], "falhou")
     db_mod.registrar_evento_ingest(job["id"], "falhou", {"motivo": motivo})
     db_mod.liberar_lock_fila(job["id"])
-    _notificar_seguro(notificar, "falhou", {**job, "status": "falhou", "motivo": motivo}, status="falhou")
+    notificacoes.notificar_job(notificar, "falhou", {**job, "status": "falhou", "motivo": motivo}, status="falhou")
 
 
 def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, notificar=None, avancar=None):
@@ -885,6 +850,8 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
                 "fechado_em": iso_agora,
             })
             db.registrar_evento_ingest(job["id"], "expirado", {})
+            if job.get("hash_conteudo"):
+                db.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], "expirado")
             db.liberar_lock_fila(job["id"])
             relatorio["expirados"] += 1
         elif job.get("conteudo_bruto") or job.get("nomes_detectados"):
@@ -941,7 +908,7 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
                         relatorio["github_falhou"] = True
                     elif pr and pr.get("state") == "open":
                         db.atualizar_estado_fila({"aberto_em": iso_agora})
-                        _notificar_seguro(
+                        notificacoes.notificar_job(
                             notificar,
                             "lock_antigo",
                             job,
@@ -980,7 +947,7 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
                         "pr_url": url,
                         "aberto_em": iso_agora,
                     })
-                    _notificar_seguro(notificar, "lock_antigo", job, pr_url=url)
+                    notificacoes.notificar_job(notificar, "lock_antigo", job, pr_url=url)
                     relatorio["locks_antigos"] += 1
                 else:
                     _falhar_manutencao(db, job, "infra", iso_agora, notificar)
@@ -990,57 +957,3 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
     avanco = (avancar or talvez_avancar_fila)()
     relatorio["avanco"] = avanco
     return relatorio
-
-
-def talvez_avancar_fila(*, disparar=None, agora=None):
-    """Toma o lock e dispara o worker; após o limite, marca `falhou`/`dispatch`."""
-    if not db.configurado():
-        return {"disparado": False, "motivo": "banco_nao_configurado"}
-    try:
-        job = db.job_mais_antigo_na_fila()
-    except db.ErroBanco as erro:
-        print(f"Falha ao ler a fila: {erro}", flush=True)
-        return {"disparado": False, "motivo": "erro_banco"}
-    if not job:
-        return {"disparado": False, "motivo": "fila_vazia"}
-
-    try:
-        tomou = db.tomar_lock_fila(job["id"], config_ingestao.INTERVALO_DISPATCH_SEGUNDOS)
-    except db.ErroBanco as erro:
-        print(f"Falha ao tomar o lock: {erro}", flush=True)
-        return {"disparado": False, "motivo": "erro_banco"}
-    if not tomou:
-        return {"disparado": False, "motivo": "lock"}
-
-    momento = agora() if callable(agora) else (agora or _agora())
-    try:
-        (disparar or disparar_worker)(job["id"])
-    except Exception:  # noqa: BLE001 - qualquer falha conta para o limite
-        falhas = int(job.get("falhas_dispatch") or 0) + 1
-        campos = {
-            "falhas_dispatch": falhas,
-            "ultima_tentativa": _iso(momento),
-            "atualizado_em": _iso(momento),
-        }
-        if falhas >= config_ingestao.MAX_FALHAS_DISPATCH:
-            campos.update({
-                "status": "falhou",
-                "motivo": "dispatch",
-                "etapa": None,
-                "fechado_em": _iso(momento),
-            })
-        try:
-            db.atualizar_job_ingest(job["id"], campos)
-            db.registrar_evento_ingest(job["id"], "dispatch_falhou", {"falhas": falhas})
-            if falhas >= config_ingestao.MAX_FALHAS_DISPATCH:
-                db.liberar_lock_fila(job["id"])
-        except db.ErroBanco as erro:
-            print(f"Falha ao registrar dispatch: {erro}", flush=True)
-        print(f"Falha ao disparar worker para {job.get('source_id') or 'job'}", flush=True)
-        return {"disparado": False, "motivo": "dispatch", "falhas": falhas}
-
-    try:
-        db.registrar_evento_ingest(job["id"], "dispatch", {})
-    except db.ErroBanco as erro:
-        print(f"Falha ao registrar dispatch: {erro}", flush=True)
-    return {"disparado": True}

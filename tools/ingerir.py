@@ -16,7 +16,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -27,14 +26,15 @@ if str(RAIZ) not in sys.path:
 import db  # noqa: E402
 import ingerir  # noqa: E402
 import notificacoes  # noqa: E402
+import tempo  # noqa: E402
 
 
 def _agora():
-    return datetime.now(timezone.utc)
+    return tempo.agora()
 
 
 def _iso(momento):
-    return momento.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return tempo.iso_utc(momento)
 
 
 def _uuid(valor):
@@ -57,23 +57,29 @@ def _paginas(resultado):
     return sorted(paginas)
 
 
-def _notificar(notificar, evento, job, *, paginas=None, status=None):
-    if notificar is None:
-        return
-    payload = notificacoes.montar_payload(
-        evento,
-        source_id=job.get("source_id"),
-        status=status or job.get("status"),
-        motivo=job.get("motivo"),
-        pr_url=job.get("pr_url"),
-        paginas=paginas,
-        criado_em=job.get("criado_em"),
-        atualizado_em=job.get("atualizado_em"),
-    )
+def _duplicata_proxima(db_mod, fonte, source_id, raiz):
+    jobs = []
+    buscar = getattr(db_mod, "buscar_jobs_duplicata_proxima", None)
+    if buscar:
+        try:
+            jobs = buscar(
+                fonte["tipo"],
+                fonte["data"],
+                fonte["titulo"],
+                ingerir.hash_conteudo(fonte["texto"]),
+            )
+        except Exception:  # noqa: BLE001 - sinal secundário não bloqueia
+            jobs = []
     try:
-        notificar(payload)
-    except Exception:  # noqa: BLE001 - notificação nunca derruba o worker
-        pass
+        manifesto = ingerir.carregar_manifesto(raiz)
+    except (OSError, ValueError, KeyError):
+        manifesto = None
+    return ingerir.detectar_duplicata_proxima(
+        fonte,
+        source_id=source_id,
+        manifesto=manifesto,
+        jobs=jobs,
+    )
 
 
 def _atualizar(db_mod, job_id, campos, *, evento=None, detalhe=None):
@@ -94,7 +100,7 @@ def _falhar_job(db_mod, job, job_id, motivo, iso_agora, notificar):
     if job.get("hash_conteudo"):
         db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], "falhou")
     db_mod.liberar_lock_fila(job_id)
-    _notificar(notificar, "falhou", {**job, **campos}, status="falhou")
+    notificacoes.notificar_job(notificar, "falhou", {**job, **campos}, status="falhou")
     return {"status": "falhou", "source_id": job.get("source_id"), "motivo": motivo}
 
 
@@ -147,11 +153,7 @@ def executar_job(
     if not estado or str(estado.get("job_id")) != job_id:
         return {"status": "ignorado", "motivo": "lock"}
 
-    momento = agora() if callable(agora) else (agora or _agora())
-    if isinstance(momento, str):
-        momento = datetime.fromisoformat(momento.strip().replace("Z", "+00:00"))
-    if momento.tzinfo is None:
-        momento = momento.replace(tzinfo=timezone.utc)
+    momento = tempo.como_datetime(agora() if callable(agora) else agora)
     iso_agora = _iso(momento)
 
     _atualizar(
@@ -216,7 +218,7 @@ def executar_job(
             db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], status)
         db_mod.liberar_lock_fila(job_id)
         atualizado = {**job, "status": status, "motivo": motivo}
-        _notificar(notificar, status, atualizado, status=status)
+        notificacoes.notificar_job(notificar, status, atualizado, status=status)
         return {"status": status, "source_id": job.get("source_id"), "motivo": motivo}
 
     _atualizar(
@@ -238,6 +240,7 @@ def executar_job(
         "data": str(job["data_documento"])[:10],
         "texto": texto,
     }
+    possivel_duplicata = _duplicata_proxima(db_mod, fonte, job["source_id"], raiz)
     try:
         resultado = ingerir.publicar(
             fonte,
@@ -251,6 +254,7 @@ def executar_job(
             lint=lint,
             git=git,
             gh=gh,
+            possivel_duplicata=possivel_duplicata,
         )
     except ingerir.ErroFonte as erro:
         motivo = "pii" if "PII" in str(erro) else "schema"
@@ -277,7 +281,7 @@ def executar_job(
         if numero:
             db_mod.marcar_pr_aberto(job_id, numero, pr.get("url"))
         atualizado = {**job, **campos}
-        _notificar(notificar, "pr_aberto", atualizado, paginas=paginas, status=status)
+        notificacoes.notificar_job(notificar, "pr_aberto", atualizado, paginas=paginas, status=status)
         return {
             "status": status,
             "source_id": job.get("source_id"),
@@ -305,7 +309,7 @@ def executar_job(
     db_mod.liberar_lock_fila(job_id)
     if status == "falhou":
         atualizado = {**job, **campos}
-        _notificar(notificar, "falhou", atualizado, status="falhou")
+        notificacoes.notificar_job(notificar, "falhou", atualizado, status="falhou")
     return {
         "status": status,
         "source_id": job.get("source_id"),
