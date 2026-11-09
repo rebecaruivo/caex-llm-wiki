@@ -51,6 +51,16 @@ STATUS_BLOQUEANTES = (
 # Resultados terminais que permitem reenvio.
 STATUS_REENVIAVEL = ("falhou", "expirado", "fechado_sem_merge")
 
+# Estados finais: não andam na fila nem mantêm o lock.
+STATUS_TERMINAIS = (
+    "publicado",
+    "fechado_sem_merge",
+    "sem_mudancas",
+    "quarentena",
+    "falhou",
+    "expirado",
+)
+
 # Domínio institucional aceito em texto público.
 DOMINIO_INSTITUCIONAL = "@example.edu"
 
