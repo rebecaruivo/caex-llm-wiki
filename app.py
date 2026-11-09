@@ -19,7 +19,10 @@ from pydantic import BaseModel, Field
 
 import config_ingestao
 import db
+import github_ingest
 import ingerir
+import notificacoes
+import reconciliacao
 from tools.lint_wiki import revisar
 from oraculo import (
     MODELO_PADRAO, ErroApi, carregar_env, carregar_prompt, chave_cache, montar_wiki,
@@ -418,7 +421,7 @@ def _repositorio_github():
 
 def disparar_worker(job_id):
     """Dispara `ingerir.yml` via GitHub Actions. Sem token, falha curta."""
-    token = os.environ.get("GITHUB_DISPATCH_TOKEN", "")
+    token = os.environ.get("GITHUB_DISPATCH_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise ErroDispatch("token de dispatch ausente")
     corpo = json.dumps({"ref": "main", "inputs": {"job_id": str(job_id)}}).encode("utf-8")
@@ -699,6 +702,21 @@ def enviar(request: Request, dados: dict = Body(default={})):
     return _processar_envio(dados, request)
 
 
+@app.get("/api/ingest/manutencao")
+def manutencao(request: Request):
+    """Executa a manutenção diária; a Vercel envia o Bearer do CRON_SECRET."""
+    _exigir_cron(request)
+    if not db.configurado():
+        raise HTTPException(status_code=503, detail=MSG_ENVIO_NAO_CONFIGURADO)
+    try:
+        return {"status": "ok", **executar_manutencao()}
+    except db.ErroBanco as erro:
+        print(f"Falha na manutenção: {erro}", flush=True)
+        raise HTTPException(
+            status_code=503, detail="Não foi possível executar a manutenção agora."
+        ) from erro
+
+
 @app.get("/api/ingest/{job_id}")
 def andamento(job_id: str, request: Request):
     """Andamento público do envio, com allowlist de campos e limite por IP."""
@@ -743,6 +761,223 @@ def andamento(job_id: str, request: Request):
         print(f"Falha ao avançar a fila: {type(erro).__name__}", flush=True)
 
     return resposta
+
+
+MSG_NAO_AUTORIZADO = "Não autorizado."
+_GITHUB_INDISPONIVEL = object()
+_PASSOS_MANUTENCAO = (
+    "expirados",
+    "limites",
+    "jobs_removidos",
+    "timeouts",
+    "locks_orfaos",
+    "locks_antigos",
+    "reconciliados",
+)
+
+
+def _exigir_cron(request):
+    """Exige `Authorization: Bearer $CRON_SECRET`; sem segredo, recusa."""
+    segredo = os.environ.get("CRON_SECRET", "")
+    enviado = ""
+    if request is not None:
+        enviado = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+    if not segredo or not hmac.compare_digest(enviado, f"Bearer {segredo}"):
+        raise HTTPException(status_code=401, detail=MSG_NAO_AUTORIZADO)
+
+
+def _instante(valor):
+    """Converte datetime ou texto ISO em datetime UTC, ou None."""
+    if isinstance(valor, datetime):
+        momento = valor
+    elif isinstance(valor, str) and valor.strip():
+        try:
+            momento = datetime.fromisoformat(valor.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    return momento.astimezone(timezone.utc)
+
+
+def _mais_antigo_que(valor, momento, *, dias=0, minutos=0):
+    instante = _instante(valor)
+    if instante is None:
+        return True
+    return instante < momento - timedelta(days=dias, minutes=minutos)
+
+
+def _notificar_seguro(notificar, evento, job, *, paginas=None, pr_url=None, status=None):
+    if notificar is None:
+        return
+    payload = notificacoes.montar_payload(
+        evento,
+        source_id=job.get("source_id"),
+        status=status or job.get("status"),
+        motivo=job.get("motivo"),
+        pr_url=pr_url if pr_url is not None else job.get("pr_url"),
+        paginas=paginas,
+        criado_em=job.get("criado_em"),
+        atualizado_em=job.get("atualizado_em"),
+    )
+    try:
+        notificar(payload)
+    except Exception:  # noqa: BLE001 - notificação nunca derruba a manutenção
+        pass
+
+
+def _falhar_manutencao(db_mod, job, motivo, agora, notificar):
+    campos = {
+        "status": "falhou",
+        "motivo": motivo,
+        "etapa": None,
+        "atualizado_em": agora,
+        "fechado_em": agora,
+    }
+    db_mod.atualizar_job_ingest(job["id"], campos)
+    if job.get("hash_conteudo"):
+        db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], "falhou")
+    db_mod.registrar_evento_ingest(job["id"], "falhou", {"motivo": motivo})
+    db_mod.liberar_lock_fila(job["id"])
+    _notificar_seguro(notificar, "falhou", {**job, "status": "falhou", "motivo": motivo}, status="falhou")
+
+
+def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, notificar=None, avancar=None):
+    """Executa os sete passos idempotentes da manutenção diária.
+
+    Devolve um relatório curto. Falha de GitHub no passo 6 não interrompe os
+    outros passos: fica registrada para a próxima execução tentar de novo.
+    """
+    momento = agora() if callable(agora) else (agora or _agora())
+    momento = _instante(momento) or _agora()
+    iso_agora = _iso(momento)
+    relatorio = {passo: 0 for passo in _PASSOS_MANUTENCAO}
+    relatorio["github_falhou"] = False
+    notificar = notificar or notificacoes.notificar
+    buscar_pr = buscar_pr or github_ingest.buscar_pr
+    buscar_pr_branch = buscar_pr_branch or github_ingest.buscar_pr_aberto_por_branch
+
+    # 1. TTL do original e dos nomes.
+    for job in db.listar_jobs_expirados(iso_agora):
+        status = job.get("status")
+        if status in ("na_fila", "processando"):
+            db.atualizar_job_ingest(job["id"], {
+                "status": "expirado",
+                "motivo": None,
+                "etapa": None,
+                "conteudo_bruto": None,
+                "nomes_detectados": None,
+                "atualizado_em": iso_agora,
+                "fechado_em": iso_agora,
+            })
+            db.registrar_evento_ingest(job["id"], "expirado", {})
+            db.liberar_lock_fila(job["id"])
+            relatorio["expirados"] += 1
+        elif job.get("conteudo_bruto") or job.get("nomes_detectados"):
+            db.limpar_conteudo_job(job["id"])
+            relatorio["expirados"] += 1
+
+    # 2. Limites vencidos.
+    db.limpar_limites_expirados(iso_agora)
+
+    # 3. Retenção de 90 dias para jobs terminais e seus eventos.
+    limite_job = _iso(momento - timedelta(days=config_ingestao.RETENCAO_JOB_DIAS))
+    for job in db.listar_jobs_terminais_antigos(limite_job, config_ingestao.STATUS_TERMINAIS):
+        db.apagar_job_ingest(job["id"])
+        relatorio["jobs_removidos"] += 1
+
+    # 4. Processando parado há mais de 15 minutos.
+    limite_processando = _iso(
+        momento - timedelta(minutes=config_ingestao.TIMEOUT_PROCESSANDO_MINUTOS)
+    )
+    for job in db.listar_processando_parados(limite_processando):
+        _falhar_manutencao(db, job, "timeout", iso_agora, notificar)
+        relatorio["timeouts"] += 1
+
+    # 5. Lock órfão ou preso em `na_fila` por mais de LOCK_DIAS.
+    estado = db.estado_fila()
+    if estado and estado.get("job_id"):
+        job = db.buscar_job_ingest(estado["job_id"])
+        if job is None or job.get("status") in config_ingestao.STATUS_TERMINAIS:
+            db.liberar_lock_fila(estado["job_id"])
+            relatorio["locks_orfaos"] += 1
+            estado = db.estado_fila()
+        elif job.get("status") == "na_fila" and _mais_antigo_que(
+            estado.get("ultima_tentativa") or job.get("ultima_tentativa") or job.get("criado_em"),
+            momento,
+            dias=config_ingestao.LOCK_DIAS,
+        ):
+            _falhar_manutencao(db, job, "dispatch", iso_agora, notificar)
+            relatorio["locks_orfaos"] += 1
+            estado = db.estado_fila()
+
+    # 6. Lock antigo com PR aberto: renova ou reconcilia.
+    estado = db.estado_fila()
+    if estado and estado.get("job_id"):
+        job = db.buscar_job_ingest(estado["job_id"])
+        if job and job.get("status") not in config_ingestao.STATUS_TERMINAIS:
+            if estado.get("aberto_em"):
+                if _mais_antigo_que(estado["aberto_em"], momento, dias=config_ingestao.LOCK_DIAS):
+                    numero = estado.get("pr_numero") or job.get("pr_numero")
+                    try:
+                        pr = buscar_pr(numero)
+                    except github_ingest.ErroGitHub:
+                        pr = _GITHUB_INDISPONIVEL
+                    if pr is _GITHUB_INDISPONIVEL:
+                        relatorio["github_falhou"] = True
+                    elif pr and pr.get("state") == "open":
+                        db.atualizar_estado_fila({"aberto_em": iso_agora})
+                        _notificar_seguro(
+                            notificar,
+                            "lock_antigo",
+                            job,
+                            pr_url=pr.get("url") or job.get("pr_url"),
+                        )
+                        relatorio["locks_antigos"] += 1
+                    elif pr is not None:
+                        reconciliacao.fechar_job(
+                            db,
+                            job,
+                            mesclado=bool(pr.get("merged")),
+                            agora=iso_agora,
+                        )
+                        relatorio["reconciliados"] += 1
+                    else:
+                        _falhar_manutencao(db, job, "infra", iso_agora, notificar)
+                        relatorio["locks_antigos"] += 1
+            elif job.get("status") == "aguardando_revisao":
+                try:
+                    pr = buscar_pr_branch(f"ingest/{job['source_id']}")
+                except github_ingest.ErroGitHub:
+                    pr = _GITHUB_INDISPONIVEL
+                if pr is _GITHUB_INDISPONIVEL:
+                    relatorio["github_falhou"] = True
+                elif pr:
+                    numero = pr.get("numero")
+                    url = pr.get("url") or job.get("pr_url")
+                    db.atualizar_job_ingest(job["id"], {
+                        "pr_numero": numero,
+                        "pr_url": url,
+                        "branch": f"ingest/{job['source_id']}",
+                        "atualizado_em": iso_agora,
+                    })
+                    db.atualizar_estado_fila({
+                        "pr_numero": numero,
+                        "pr_url": url,
+                        "aberto_em": iso_agora,
+                    })
+                    _notificar_seguro(notificar, "lock_antigo", job, pr_url=url)
+                    relatorio["locks_antigos"] += 1
+                else:
+                    _falhar_manutencao(db, job, "infra", iso_agora, notificar)
+                    relatorio["locks_antigos"] += 1
+
+    # 7. Avanço da fila, uma única vez, depois de toda a limpeza.
+    avanco = (avancar or talvez_avancar_fila)()
+    relatorio["avanco"] = avanco
+    return relatorio
 
 
 def talvez_avancar_fila(*, disparar=None, agora=None):
