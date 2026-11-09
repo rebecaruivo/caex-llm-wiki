@@ -406,6 +406,20 @@ class AbrirPrTest(PublicacaoBase):
         self.assertNotIn("Rosa", corpo)
         self.assertNotIn(fonte()["texto"], corpo)
 
+    def test_falha_de_push_vira_falhou_infra_e_nao_abre_pr(self):
+        def git(argumentos, raiz):
+            if argumentos[:1] == ["push"]:
+                raise ingerir.ErroPublicacao("push falhou")
+            return ""
+
+        resultado = self.publicar(git=git)
+        self.assertEqual(resultado["status"], "falhou")
+        self.assertEqual(resultado["motivo"], "infra")
+        self.assertEqual(self.gh.chamadas, [])
+        self.assertEqual(
+            list((self.raiz / "sources/atas").glob("ATA-2030-04-10-*")), []
+        )
+
     def test_push_do_branch_acontece_antes_do_gh_pr_create(self):
         ordem = []
 
