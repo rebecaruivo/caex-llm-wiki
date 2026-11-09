@@ -97,6 +97,18 @@ def pagina_revisao():
     return FileResponse(RAIZ / "static" / "revisar.html", headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/enviar", include_in_schema=False)
+def pagina_enviar():
+    """Entrega o formulário público de envio de fontes."""
+    return FileResponse(RAIZ / "static" / "enviar.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/enviar/{job_id}", include_in_schema=False)
+def pagina_andamento(job_id: str):
+    """Entrega a página de andamento; o UUID é lido do caminho pelo navegador."""
+    return FileResponse(RAIZ / "static" / "enviar.html", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/saude")
 def saude():
     """Confirma que a API está no ar, sem chamar o Gemini."""

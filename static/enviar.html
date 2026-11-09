@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adicionar fonte · Oráculo do CAEX</title>
+  <meta name="description" content="Envie uma ata, um guia ou um relato para a wiki do CAEX. A gestão revisa antes de publicar. Dados fictícios.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+  <script>
+    (function () {
+      let salvo = null;
+      try { salvo = localStorage.getItem("oraculo-tema"); } catch (e) { /* sem armazenamento */ }
+      const escuro = salvo ? salvo === "escuro" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = escuro ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/oraculo.css">
+  <style>
+    .envio { flex: 999 1 640px; min-width: 0; max-width: 760px; }
+    .envio .inicio { padding-top: 24px; }
+    .form-envio { display: flex; flex-direction: column; gap: 20px; margin-top: 24px; }
+    .grupo-campos { display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; border: 0; }
+    .campo { display: flex; flex-direction: column; gap: 6px; }
+    .campo > label, .campo-rotulo { font: 500 13px/20px var(--font-sans); color: var(--ink); }
+    .campo-nota { font-weight: 400; color: var(--ink-muted); }
+    .campo input[type="text"], .campo input[type="date"], .campo select, .campo textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+      background: var(--surface-raised); color: var(--ink); font: 400 15px/22px var(--font-sans);
+    }
+    .campo textarea { min-height: 220px; resize: vertical; }
+    .campo input[type="file"] { width: 100%; font: 400 14px/22px var(--font-sans); color: var(--ink-muted); }
+    .campo-ajuda { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-muted); }
+    .campo-consentimento { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; }
+    .campo-consentimento input { width: 18px; height: 18px; margin: 2px 0 0; }
+    .campo-consentimento label { font: 400 14px/22px var(--font-sans); color: var(--ink); }
+    .dica-pii { margin: 0; padding: 12px 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); font-size: 14px; line-height: 22px; color: var(--ink-muted); }
+    .acoes-envio { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .passos { margin: 12px 0 0; padding-left: 1.25em; display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 22px; color: var(--ink-muted); }
+    .painel-andamento { margin-top: 24px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); }
+    .andamento-mensagem { margin: 8px 0 20px; font: 400 20px/30px var(--font-serif); color: var(--ink); }
+    .andamento-mensagem:empty::before { content: "Consultando o envio…"; color: var(--ink-muted); }
+    .detalhes { margin: 0 0 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    .detalhes div { padding-top: 12px; border-top: 1px solid var(--line); }
+    .detalhes dt { font: 600 11px/16px var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
+    .detalhes dd { margin: 6px 0 0; font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+    .andamento-nota { margin: 0 0 16px; font-size: 14px; line-height: 22px; color: var(--ink-muted); }
+    .status-pr { margin: 0 0 20px; font-size: 15px; line-height: 22px; }
+    .link-copiavel { margin: 16px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-muted); }
+    @media (max-width: 640px) {
+      .campo input[type="text"], .campo input[type="date"], .campo select, .campo textarea { font-size: 16px; }
+      .painel-andamento { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topo">
+    <div class="topo-dentro">
+      <a class="marca" href="/">
+        <span class="marca-nome">Oráculo</span>
+        <span class="marca-sigla">CAEX</span>
+      </a>
+      <nav class="nav-topo" aria-label="Principal">
+        <a href="/">Perguntar</a>
+        <a href="/revisar">Revisar wiki</a>
+        <a href="/enviar" aria-current="page">Adicionar fonte</a>
+      </nav>
+      <div class="topo-acoes">
+        <button class="or-btn or-btn--secondary or-btn--sm" type="button" id="botao-tema">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path d="M8 2.75a5.25 5.25 0 010 10.5z" fill="currentColor" stroke="none"></path></svg>
+          <span id="rotulo-tema">Tema escuro</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="corpo">
+    <main class="envio">
+      <section class="inicio">
+        <p class="rotulo-secao">Ingestão · fonte</p>
+        <h1 id="titulo-pagina" tabindex="-1">Adicionar fonte à wiki</h1>
+        <p class="lead" id="introducao">Envie uma ata, um guia ou um relato. A gestão revisa antes de publicar. Não envie dados pessoais.</p>
+      </section>
+
+      <div id="estado-fechado" class="or-notice" role="status" hidden>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 2.75a7.25 7.25 0 100 14.5 7.25 7.25 0 000-14.5zM10 6.5v4M10 13.5v.5"></path></svg>
+        <span class="or-notice__title" id="texto-fechado">Envio fechado para testes.</span>
+      </div>
+
+      <form class="form-envio" id="form-envio" novalidate hidden>
+        <div id="erro-envio" class="or-notice or-notice--erro" role="alert" hidden>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 3l7.5 13.5h-15zM10 8.5v3.5M10 14.25v.5"></path></svg>
+          <span class="or-notice__title" id="texto-erro"></span>
+        </div>
+
+        <fieldset class="grupo-campos">
+          <legend class="oculto">Dados da fonte</legend>
+
+          <div class="campo">
+            <label for="tipo">Tipo de documento</label>
+            <select id="tipo" name="tipo" required>
+              <option value="ata">Ata</option>
+              <option value="guia">Guia</option>
+              <option value="outro">Relato</option>
+            </select>
+          </div>
+
+          <div class="campo">
+            <label for="titulo">Título</label>
+            <input id="titulo" name="titulo" type="text" minlength="3" maxlength="200" required autocomplete="off">
+          </div>
+
+          <div class="campo">
+            <label for="data-documento">Data do documento</label>
+            <input id="data-documento" name="data_documento" type="date" required>
+          </div>
+
+          <div class="campo">
+            <label for="texto">Texto da fonte</label>
+            <textarea id="texto" name="texto" rows="12" required aria-describedby="ajuda-texto"></textarea>
+            <p class="campo-ajuda" id="ajuda-texto">Cole o texto ou carregue um arquivo abaixo.</p>
+          </div>
+
+          <div class="campo">
+            <label for="arquivo">Ou envie um arquivo <span class="campo-nota">(.md ou .txt, até 50 KB)</span></label>
+            <input id="arquivo" name="arquivo" type="file" accept=".md,.txt,text/markdown,text/plain" aria-describedby="ajuda-arquivo">
+            <p class="campo-ajuda" id="ajuda-arquivo" aria-live="polite">O arquivo é lido no seu navegador e enviado como texto.</p>
+          </div>
+
+          <div class="campo-consentimento">
+            <input id="consentimento" name="consentimento" type="checkbox" required>
+            <label for="consentimento">Declaro que removi dados pessoais e que o texto pode ser publicado nesta wiki após revisão da gestão.</label>
+          </div>
+        </fieldset>
+
+        <p class="dica-pii" id="dica-pii">Não envie CPF, RA, telefone, e-mail pessoal ou nomes de pessoas.</p>
+
+        <div class="acoes-envio">
+          <button class="or-btn or-btn--primary" type="submit" id="botao-enviar">Enviar fonte</button>
+        </div>
+      </form>
+
+      <section id="sucesso" class="or-notice" aria-live="polite" hidden>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 2.75a7.25 7.25 0 100 14.5 7.25 7.25 0 000-14.5zM6.75 10.25l2.25 2.25 4.25-4.5"></path></svg>
+        <span class="or-notice__title">Fonte recebida.</span>
+        <div class="or-notice__body">
+          <p>Acompanhe em <a id="link-sucesso" href="/enviar">/enviar</a>.</p>
+        </div>
+      </section>
+
+      <section id="andamento" aria-labelledby="titulo-pagina" hidden>
+        <div class="painel-andamento">
+          <p class="rotulo-secao">Andamento do envio</p>
+          <p class="andamento-mensagem" id="status-mensagem" aria-live="polite"></p>
+          <dl class="detalhes">
+            <div><dt>Posição na fila</dt><dd id="status-posicao">—</dd></div>
+            <div><dt>Tempo decorrido</dt><dd id="status-tempo">—</dd></div>
+            <div><dt>Identificador da fonte</dt><dd class="mono" id="status-source">—</dd></div>
+          </dl>
+          <p class="andamento-nota">A espera depende da revisão da gestão.</p>
+          <p class="status-pr" id="linha-pr" hidden></p>
+          <button class="or-btn or-btn--secondary" type="button" id="botao-atualizar" hidden>Atualizar</button>
+          <p class="link-copiavel">Guarde o link desta página. Ele é a única forma de acompanhar este envio.</p>
+        </div>
+      </section>
+    </main>
+
+    <aside class="lado-dir" aria-label="Como funciona o envio">
+      <section>
+        <h2 class="painel-titulo">Como funciona</h2>
+        <ol class="passos">
+          <li>A IA propõe mudanças na wiki.</li>
+          <li>O lint confere estrutura e citações.</li>
+          <li>A gestão revisa o Pull Request.</li>
+          <li>Se aprovado, a wiki é atualizada.</li>
+        </ol>
+      </section>
+      <section class="secao-lado">
+        <h2 class="rotulo-secao">Antes de enviar</h2>
+        <p class="painel-nota">Não envie CPF, RA, telefone, e-mail pessoal ou nomes de pessoas.</p>
+        <p class="painel-nota">O link de andamento funciona como uma senha: quem tiver o endereço consegue consultar o envio. Compartilhe só com quem precisa acompanhar.</p>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="rodape">
+    <p>O CAEX e todos os dados desta wiki são fictícios.</p>
+  </footer>
+
+  <script>
+    const MAX_BYTES_PADRAO = 51200;
+    const INTERVALO_PROCESSANDO = 5000;
+    const INTERVALO_FILA = 15000;
+    const TERMINAIS = new Set([
+      "publicado", "fechado_sem_merge", "sem_mudancas", "quarentena", "falhou", "expirado"
+    ]);
+    const ESTADOS_DE_ESPERA = new Set(["na_fila", "aguardando_revisao"]);
+    const MENSAGENS_PADRAO = {
+      503: "O envio está fechado para testes.",
+      403: "Não foi possível verificar o navegador. Tente novamente.",
+      409: "Esta fonte já foi registrada.",
+      422: "Confira os campos e envie de novo.",
+      429: "Limite de envios atingido. Tente novamente amanhã."
+    };
+
+    const titulo = document.getElementById("titulo-pagina");
+    const introducao = document.getElementById("introducao");
+    const estadoFechado = document.getElementById("estado-fechado");
+    const textoFechado = document.getElementById("texto-fechado");
+    const form = document.getElementById("form-envio");
+    const erro = document.getElementById("erro-envio");
+    const textoErro = document.getElementById("texto-erro");
+    const sucesso = document.getElementById("sucesso");
+    const linkSucesso = document.getElementById("link-sucesso");
+    const campoTexto = document.getElementById("texto");
+    const campoArquivo = document.getElementById("arquivo");
+    const ajudaArquivo = document.getElementById("ajuda-arquivo");
+    const botaoEnviar = document.getElementById("botao-enviar");
+    const andamento = document.getElementById("andamento");
+    const statusMensagem = document.getElementById("status-mensagem");
+    const statusPosicao = document.getElementById("status-posicao");
+    const statusTempo = document.getElementById("status-tempo");
+    const statusSource = document.getElementById("status-source");
+    const linhaPr = document.getElementById("linha-pr");
+    const botaoAtualizar = document.getElementById("botao-atualizar");
+
+    let maxBytes = MAX_BYTES_PADRAO;
+    let enviado = false;
+    let temporizadorPoll = null;
+    let temporizadorTempo = null;
+    let inicioMs = null;
+    let statusAnterior = null;
+
+    function rotuloTema() {
+      const escuro = document.documentElement.dataset.theme === "dark";
+      document.getElementById("rotulo-tema").textContent = escuro ? "Tema claro" : "Tema escuro";
+    }
+    document.getElementById("botao-tema").addEventListener("click", () => {
+      const escuro = document.documentElement.dataset.theme !== "dark";
+      document.documentElement.dataset.theme = escuro ? "dark" : "light";
+      try { localStorage.setItem("oraculo-tema", escuro ? "escuro" : "claro"); } catch (e) { /* sem armazenamento */ }
+      rotuloTema();
+    });
+
+    function caminho() {
+      return window.location.pathname.replace(/\/+$/, "");
+    }
+    function uuidDoCaminho() {
+      const partes = caminho().split("/").filter(Boolean);
+      if (partes.length !== 2 || partes[0] !== "enviar") return null;
+      try { return decodeURIComponent(partes[1]); } catch (e) { return partes[1]; }
+    }
+    function formatarDuracao(segundos) {
+      const total = Math.max(0, Math.floor(segundos));
+      const horas = Math.floor(total / 3600);
+      const minutos = Math.floor((total % 3600) / 60);
+      const resto = total % 60;
+      if (horas) return `${horas} h ${minutos} min`;
+      if (minutos) return `${minutos} min ${resto} s`;
+      return `${resto} s`;
+    }
+    function limparErro() {
+      erro.hidden = true;
+      textoErro.textContent = "";
+    }
+    function mostrarErro(mensagem) {
+      textoErro.textContent = String(mensagem || "Não foi possível enviar agora. Tente de novo.");
+      erro.hidden = false;
+    }
+    function detalheErro(status, corpo) {
+      if (corpo && typeof corpo.detail === "string" && corpo.detail.trim()) return corpo.detail;
+      return MENSAGENS_PADRAO[status] || "Não foi possível enviar agora. Tente de novo em alguns instantes.";
+    }
+    function focarTitulo() {
+      if (titulo && typeof titulo.focus === "function") titulo.focus();
+    }
+    function el(tag, props, filhos) {
+      const node = document.createElement(tag);
+      for (const [chave, valor] of Object.entries(props || {})) {
+        if (valor == null || valor === false) continue;
+        if (chave === "text") node.textContent = String(valor);
+        else if (chave === "class") node.className = valor;
+        else node.setAttribute(chave, String(valor));
+      }
+      for (const filho of filhos || []) if (filho) node.appendChild(filho);
+      return node;
+    }
+    function atualizarLinkPr(url) {
+      while (linhaPr.firstChild) linhaPr.removeChild(linhaPr.firstChild);
+      const segura = urlSegura(url);
+      if (!segura) {
+        linhaPr.hidden = true;
+        return;
+      }
+      linhaPr.appendChild(el("span", { text: "Proposta: " }));
+      linhaPr.appendChild(el("a", {
+        href: segura, target: "_blank", rel: "noopener noreferrer", text: "Abrir Pull Request"
+      }));
+      linhaPr.hidden = false;
+    }
+
+    async function carregarConfig() {
+      try {
+        const resposta = await fetch("/api/enviar/config", { headers: { Accept: "application/json" } });
+        if (!resposta.ok) throw new Error(String(resposta.status));
+        const config = await resposta.json();
+        if (!config || config.aberto !== true) {
+          textoFechado.textContent = "Envio fechado para testes.";
+          estadoFechado.hidden = false;
+          form.hidden = true;
+          return;
+        }
+        const limite = Number(config.max_bytes);
+        if (Number.isFinite(limite) && limite > 0) maxBytes = limite;
+        estadoFechado.hidden = true;
+        form.hidden = false;
+        document.getElementById("titulo").focus();
+      } catch (e) {
+        textoFechado.textContent = "Não foi possível carregar o formulário agora. Tente de novo em alguns instantes.";
+        estadoFechado.hidden = false;
+        form.hidden = true;
+      }
+    }
+
+    campoArquivo.addEventListener("change", async () => {
+      const arquivo = campoArquivo.files && campoArquivo.files[0];
+      if (!arquivo) {
+        ajudaArquivo.textContent = "O arquivo é lido no seu navegador e enviado como texto.";
+        return;
+      }
+      const nome = String(arquivo.name || "");
+      if (!/\.(md|txt)$/i.test(nome)) {
+        campoArquivo.value = "";
+        mostrarErro("Envie um arquivo .md ou .txt.");
+        return;
+      }
+      if (arquivo.size > maxBytes) {
+        campoArquivo.value = "";
+        mostrarErro("O arquivo passa do limite de 50 KB.");
+        return;
+      }
+      try {
+        const texto = await arquivo.text();
+        if (new TextEncoder().encode(texto).length > maxBytes) {
+          campoArquivo.value = "";
+          mostrarErro("O arquivo passa do limite de 50 KB.");
+          return;
+        }
+        campoTexto.value = texto;
+        limparErro();
+        ajudaArquivo.textContent = `Arquivo ${nome} carregado e enviado como texto.`;
+      } catch (e) {
+        campoArquivo.value = "";
+        mostrarErro("Não foi possível ler o arquivo. Tente de novo.");
+      }
+    });
+
+    form.addEventListener("submit", async (evento) => {
+      evento.preventDefault();
+      if (enviado) return;
+      limparErro();
+      if (!form.reportValidity()) return;
+
+      const texto = campoTexto.value;
+      if (new TextEncoder().encode(texto).length > maxBytes) {
+        mostrarErro("O texto passa do limite de 50 KB.");
+        return;
+      }
+      const dados = {
+        tipo: document.getElementById("tipo").value,
+        titulo: document.getElementById("titulo").value,
+        data_documento: document.getElementById("data-documento").value,
+        texto,
+        turnstile_token: typeof window.turnstileToken === "string" ? window.turnstileToken : ""
+      };
+
+      botaoEnviar.disabled = true;
+      botaoEnviar.textContent = "Enviando…";
+      try {
+        const resposta = await fetch("/api/enviar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(dados)
+        });
+        let corpo = null;
+        try { corpo = await resposta.json(); } catch (e) { corpo = null; }
+        if (resposta.status === 201) {
+          enviado = true;
+          form.hidden = true;
+          const id = corpo && typeof corpo.id === "string" ? corpo.id : "";
+          const destino = id ? `/enviar/${encodeURIComponent(id)}` : "/enviar";
+          linkSucesso.href = destino;
+          linkSucesso.textContent = destino;
+          sucesso.hidden = false;
+          focarTitulo();
+          return;
+        }
+        mostrarErro(detalheErro(resposta.status, corpo));
+        focarTitulo();
+      } catch (e) {
+        mostrarErro("Não foi possível enviar agora. Tente de novo em alguns instantes.");
+        focarTitulo();
+      } finally {
+        if (!enviado) {
+          botaoEnviar.disabled = false;
+          botaoEnviar.textContent = "Enviar fonte";
+        }
+      }
+    });
+
+    function pararTemporizadores() {
+      if (temporizadorPoll) {
+        clearTimeout(temporizadorPoll);
+        temporizadorPoll = null;
+      }
+      if (temporizadorTempo) {
+        clearInterval(temporizadorTempo);
+        temporizadorTempo = null;
+      }
+    }
+    function agendar(ms) {
+      if (temporizadorPoll) clearTimeout(temporizadorPoll);
+      temporizadorPoll = setTimeout(consultar, ms);
+    }
+    function atualizarTempo() {
+      if (inicioMs == null) {
+        statusTempo.textContent = "—";
+        return;
+      }
+      statusTempo.textContent = formatarDuracao((Date.now() - inicioMs) / 1000);
+    }
+    function definirInicio(criadoEm) {
+      const marca = Date.parse(criadoEm);
+      if (Number.isNaN(marca)) return;
+      inicioMs = marca;
+      if (!temporizadorTempo) temporizadorTempo = setInterval(atualizarTempo, 1000);
+      atualizarTempo();
+    }
+    function urlSegura(valor) {
+      return typeof valor === "string" && valor.startsWith("https://") ? valor : "";
+    }
+    function renderizar(corpo) {
+      statusMensagem.textContent = typeof corpo.mensagem === "string"
+        ? corpo.mensagem
+        : "Acompanhe a revisão da gestão.";
+      statusPosicao.textContent = corpo.posicao_fila == null ? "—" : String(corpo.posicao_fila);
+      statusSource.textContent = typeof corpo.source_id === "string" && corpo.source_id ? corpo.source_id : "—";
+      if (corpo.criado_em) definirInicio(corpo.criado_em);
+
+      atualizarLinkPr(corpo.pr_url);
+
+      if (corpo.status !== statusAnterior) {
+        statusAnterior = corpo.status;
+        focarTitulo();
+      }
+
+      if (TERMINAIS.has(corpo.status)) {
+        pararTemporizadores();
+        atualizarTempo();
+        botaoAtualizar.hidden = false;
+      } else {
+        botaoAtualizar.hidden = true;
+        const intervalo = ESTADOS_DE_ESPERA.has(corpo.status) || corpo.status !== "processando"
+          ? INTERVALO_FILA
+          : INTERVALO_PROCESSANDO;
+        agendar(intervalo);
+      }
+    }
+    function renderizarIndisponivel() {
+      statusMensagem.textContent = "Este envio não está mais disponível.";
+      statusPosicao.textContent = "—";
+      statusTempo.textContent = "—";
+      statusSource.textContent = "—";
+      linhaPr.hidden = true;
+      pararTemporizadores();
+      botaoAtualizar.hidden = false;
+      focarTitulo();
+    }
+    async function consultar() {
+      const id = uuidDoCaminho();
+      if (!id) return;
+      try {
+        const resposta = await fetch(`/api/ingest/${encodeURIComponent(id)}`, { headers: { Accept: "application/json" } });
+        let corpo = null;
+        try { corpo = await resposta.json(); } catch (e) { corpo = null; }
+        if (resposta.status === 404) {
+          renderizarIndisponivel();
+          return;
+        }
+        if (!resposta.ok) {
+          statusMensagem.textContent = detalheErro(resposta.status, corpo);
+          agendar(INTERVALO_FILA);
+          return;
+        }
+        if (!corpo || typeof corpo.status !== "string") {
+          statusMensagem.textContent = "Não foi possível consultar o envio agora.";
+          agendar(INTERVALO_FILA);
+          return;
+        }
+        renderizar(corpo);
+      } catch (e) {
+        statusMensagem.textContent = "Não foi possível consultar o envio agora. Tentando de novo…";
+        agendar(INTERVALO_FILA);
+      }
+    }
+
+    function iniciarAndamento() {
+      titulo.textContent = "Andamento do envio";
+      introducao.textContent = "Acompanhe o envio desta fonte. A gestão revisa antes de publicar.";
+      estadoFechado.hidden = true;
+      form.hidden = true;
+      sucesso.hidden = true;
+      andamento.hidden = false;
+      botaoAtualizar.addEventListener("click", () => {
+        botaoAtualizar.hidden = true;
+        consultar();
+      });
+      consultar();
+    }
+
+    rotuloTema();
+    if (uuidDoCaminho()) iniciarAndamento();
+    else carregarConfig();
+  </script>
+</body>
+</html>
