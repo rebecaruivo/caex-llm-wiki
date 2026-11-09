@@ -1,8 +1,9 @@
-"""Guarda e lê o histórico de chats no Supabase.
+"""Guarda e lê o histórico de chats e os jobs de ingestão no Supabase.
 
 O Supabase transforma cada tabela do banco em um endereço HTTP (a API REST):
-GET lê, POST cria e DELETE apaga. Só este arquivo conhece a chave secreta,
-e só a API chama estas funções. O navegador nunca fala direto com o banco.
+GET lê, POST cria, PATCH atualiza e DELETE apaga. As funções RPC são chamadas
+em `/rest/v1/rpc/<funcao>`. Só este arquivo conhece a chave secreta, e só a API
+chama estas funções. O navegador nunca fala direto com o banco.
 """
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from uuid import UUID
 
 
@@ -19,6 +21,14 @@ class ErroBanco(Exception):
 
 class ChatNaoEncontrado(ErroBanco):
     """O chat não existe ou já foi apagado."""
+
+
+class DuplicataIngest(ErroBanco):
+    """O índice único parcial já tem um job bloqueante para este hash."""
+
+
+class SourceIdEmUso(ErroBanco):
+    """O source_id já existe; a API deve tentar um sufixo maior."""
 
 
 def configurado():
@@ -31,21 +41,35 @@ def _id(chat_id):
     return str(UUID(str(chat_id)))
 
 
-def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None, contar=False):
-    """Faz uma chamada à API REST do Supabase e devolve o JSON da resposta."""
+def _base_e_cabecalhos():
     base = os.environ.get("SUPABASE_URL", "").rstrip("/").removesuffix("/rest/v1")
     chave = os.environ.get("SUPABASE_SECRET_KEY", "")
     if not base or not chave:
         raise ErroBanco("SUPABASE_URL ou SUPABASE_SECRET_KEY não configurada.")
-
-    url = f"{base}/rest/v1/{tabela}"
-    if filtros:
-        url += "?" + urllib.parse.urlencode(filtros)
-
     cabecalhos = {"apikey": chave, "Content-Type": "application/json"}
     if not chave.startswith("sb_"):
         # A chave antiga (service_role) é um token JWT e vai também neste cabeçalho.
         cabecalhos["Authorization"] = f"Bearer {chave}"
+    return base, cabecalhos
+
+
+def _abrir(pedido, timeout=10):
+    """Abre o pedido HTTP. É o único ponto de rede, trocado nos testes."""
+    return urllib.request.urlopen(pedido, timeout=timeout)
+
+
+def _ler_resposta(resposta):
+    texto = resposta.read().decode("utf-8")
+    return texto, resposta.headers
+
+
+def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None, contar=False):
+    """Faz uma chamada à API REST do Supabase e devolve o JSON da resposta."""
+    base, cabecalhos = _base_e_cabecalhos()
+    url = f"{base}/rest/v1/{tabela}"
+    if filtros:
+        url += "?" + urllib.parse.urlencode(filtros)
+
     preferencias = []
     if devolver:
         # Pede ao Supabase para devolver as linhas criadas ou apagadas.
@@ -62,13 +86,13 @@ def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None
     dados = json.dumps(corpo, ensure_ascii=False).encode("utf-8") if corpo is not None else None
     pedido = urllib.request.Request(url, data=dados, headers=cabecalhos, method=metodo)
     try:
-        with urllib.request.urlopen(pedido, timeout=10) as resposta:
-            texto = resposta.read().decode("utf-8")
+        with _abrir(pedido) as resposta:
+            texto, cabecalhos_resposta = _ler_resposta(resposta)
             if contar:
                 # Formato: "0-0/123" (ou "*/0" quando não há linhas).
-                return int(resposta.headers.get("Content-Range", "*/0").split("/")[-1])
+                return int(cabecalhos_resposta.get("Content-Range", "*/0").split("/")[-1])
     except urllib.error.HTTPError as erro:
-        detalhe = erro.read().decode("utf-8", "replace")[:300]
+        detalhe = erro.read().decode("utf-8", "replace")[:500]
         if '"23503"' in detalhe:
             # Código do Postgres para "aponta para um chat que não existe".
             raise ChatNaoEncontrado("Chat não encontrado.") from erro
@@ -77,6 +101,58 @@ def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None
         raise ErroBanco(f"Sem conexão com o Supabase: {erro}") from erro
     return json.loads(texto) if texto else None
 
+
+def _rpc(funcao, corpo=None):
+    """Chama uma função RPC do Postgres via `/rest/v1/rpc/<funcao>`."""
+    base, cabecalhos = _base_e_cabecalhos()
+    url = f"{base}/rest/v1/rpc/{funcao}"
+    dados = json.dumps(corpo or {}, ensure_ascii=False).encode("utf-8")
+    pedido = urllib.request.Request(url, data=dados, headers=cabecalhos, method="POST")
+    try:
+        with _abrir(pedido) as resposta:
+            texto, _ = _ler_resposta(resposta)
+    except urllib.error.HTTPError as erro:
+        detalhe = erro.read().decode("utf-8", "replace")[:500]
+        raise ErroBanco(f"Supabase respondeu {erro.code}: {detalhe}") from erro
+    except (urllib.error.URLError, TimeoutError) as erro:
+        raise ErroBanco(f"Sem conexão com o Supabase: {erro}") from erro
+    return json.loads(texto) if texto else None
+
+
+def _valor_rpc(resposta):
+    """Extrai um escalar das formas que o PostgREST devolve para RPCs."""
+    if resposta is None:
+        return None
+    if isinstance(resposta, (int, float, bool)):
+        return resposta
+    if isinstance(resposta, list):
+        if not resposta:
+            return None
+        resposta = resposta[0]
+    if isinstance(resposta, dict):
+        for chave in ("valor", "resultado", "contagem", "consumir_limite", "tomar_lock_fila"):
+            if chave in resposta:
+                return resposta[chave]
+        if len(resposta) == 1:
+            return next(iter(resposta.values()))
+        return None
+    return resposta
+
+
+def _texto_erro(erro):
+    return str(erro).lower()
+
+
+def _booleano_rpc(resposta):
+    valor = _valor_rpc(resposta)
+    if isinstance(valor, str):
+        return valor.strip().lower() == "true"
+    return bool(valor)
+
+
+# ---------------------------------------------------------------------------
+# Histórico de chats (comportamento anterior preservado)
+# ---------------------------------------------------------------------------
 
 def listar_chats(limite=50):
     """Lista os chats do CA, do mais recente para o mais antigo."""
@@ -173,3 +249,182 @@ def metricas():
     total = _pedir("GET", "mensagens", {"select": "id"}, contar=True)
     reaproveitadas = _pedir("GET", "mensagens", {"select": "id", "do_cache": "eq.true"}, contar=True)
     return {"perguntas": total, "reaproveitadas": reaproveitadas}
+
+
+# ---------------------------------------------------------------------------
+# Ingestão: jobs, limites, lock e hashes
+# ---------------------------------------------------------------------------
+
+def _hash_valido(hash_):
+    if not re.fullmatch(r"[0-9a-f]{64}", str(hash_)):
+        raise ValueError("Hash de conteúdo inválido.")
+    return str(hash_)
+
+
+def _filtro_status(statuss):
+    return "in.(" + ",".join(statuss) + ")"
+
+
+def criar_job_ingest(dados):
+    """Cria um job em `na_fila` e devolve a linha criada.
+
+    O índice único parcial de `hash_conteudo` resolve a corrida entre dois
+    envios: se ele disparar, levantamos `DuplicataIngest`; colisão de
+    `source_id` levanta `SourceIdEmUso` para a API tentar um sufixo maior.
+    """
+    try:
+        linhas = _pedir("POST", "ingest_jobs", corpo=dados, devolver=True)
+    except ErroBanco as erro:
+        texto = _texto_erro(erro)
+        if "23505" in texto:
+            if "hash_bloqueante" in texto or "hash_conteudo" in texto:
+                raise DuplicataIngest("Já existe um envio bloqueante para este conteúdo.") from erro
+            if "source_id" in texto:
+                raise SourceIdEmUso("source_id já está em uso.") from erro
+        raise
+    return linhas[0] if linhas else None
+
+
+def buscar_job_ingest(job_id):
+    """Devolve o job completo pelo UUID, ou None."""
+    linhas = _pedir("GET", "ingest_jobs", {
+        "id": f"eq.{_id(job_id)}",
+        "select": "*",
+        "limit": "1",
+    })
+    return linhas[0] if linhas else None
+
+
+def buscar_job_bloqueante_por_hash(hash_, statuss):
+    """Primeiro job bloqueante com este hash, ou None."""
+    linhas = _pedir("GET", "ingest_jobs", {
+        "hash_conteudo": f"eq.{_hash_valido(hash_)}",
+        "status": _filtro_status(statuss),
+        "select": "id,source_id,status",
+        "order": "criado_em.asc",
+        "limit": "1",
+    })
+    return linhas[0] if linhas else None
+
+
+def buscar_hash_ingest(hash_, resultados):
+    """Resultado terminal guardado para o hash, ou None."""
+    linhas = _pedir("GET", "ingest_hashes", {
+        "hash_conteudo": f"eq.{_hash_valido(hash_)}",
+        "resultado": _filtro_status(resultados),
+        "select": "hash_conteudo,source_id,resultado",
+        "limit": "1",
+    })
+    return linhas[0] if linhas else None
+
+
+def guardar_hash_ingest(hash_, source_id, resultado):
+    """Grava o último resultado terminal do hash, sem texto nem nomes."""
+    _pedir("POST", "ingest_hashes", {"on_conflict": "hash_conteudo"}, corpo={
+        "hash_conteudo": _hash_valido(hash_),
+        "source_id": source_id,
+        "resultado": resultado,
+        "atualizado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, prefer="resolution=merge-duplicates")
+
+
+def listar_source_ids_ingest():
+    """Todos os `source_id` de jobs existentes, para evitar colisão."""
+    linhas = _pedir("GET", "ingest_jobs", {"select": "source_id", "limit": "10000"})
+    return [linha["source_id"] for linha in linhas or []]
+
+
+def contar_jobs_na_fila_antes(criado_em):
+    """Quantos jobs `na_fila` são mais antigos que o instante informado."""
+    return _pedir("GET", "ingest_jobs", {
+        "status": "eq.na_fila",
+        "criado_em": f"lt.{criado_em}",
+        "select": "id",
+    }, contar=True)
+
+
+def contar_jobs_por_status(statuss):
+    """Conta jobs nos estados informados. Usado por métricas e manutenção."""
+    return _pedir("GET", "ingest_jobs", {
+        "status": _filtro_status(statuss),
+        "select": "id",
+    }, contar=True)
+
+
+def job_mais_antigo_na_fila():
+    """O job `na_fila` mais antigo, ou None."""
+    linhas = _pedir("GET", "ingest_jobs", {
+        "status": "eq.na_fila",
+        "select": "id,source_id,status,falhas_dispatch,criado_em",
+        "order": "criado_em.asc",
+        "limit": "1",
+    })
+    return linhas[0] if linhas else None
+
+
+def atualizar_job_ingest(job_id, campos):
+    """Atualiza campos do job e devolve a linha nova."""
+    linhas = _pedir("PATCH", "ingest_jobs", {"id": f"eq.{_id(job_id)}"}, corpo=campos, devolver=True)
+    return linhas[0] if linhas else None
+
+
+def registrar_evento_ingest(job_id, evento, detalhe=None):
+    """Registra um evento curto, sem texto bruto, nomes ou IP."""
+    _pedir("POST", "ingest_eventos", corpo={
+        "job_id": _id(job_id),
+        "evento": evento,
+        "detalhe": detalhe or {},
+    })
+
+
+def tomar_lock_fila(job_id, intervalo_segundos):
+    """Tenta o lock da fila; devolve True quando ele passa a ser do job."""
+    resposta = _rpc("tomar_lock_fila", {
+        "p_job_id": _id(job_id),
+        "p_intervalo_segundos": int(intervalo_segundos),
+    })
+    return _booleano_rpc(resposta)
+
+
+def liberar_lock_fila(job_id):
+    """Libera o lock se ele ainda pertencer ao job."""
+    _rpc("liberar_lock_fila", {"p_job_id": _id(job_id)})
+
+
+def marcar_pr_aberto(job_id, pr_numero, pr_url):
+    """Grava o PR aberto no lock compartilhado."""
+    _rpc("marcar_pr_aberto", {
+        "p_job_id": _id(job_id),
+        "p_pr_numero": int(pr_numero),
+        "p_pr_url": pr_url,
+    })
+
+
+def consumir_ip(chave, dia, limite, expira_em):
+    """Consome uma unidade do limite por IP; None quando o limite acabou."""
+    return _valor_rpc(_rpc("consumir_ip", {
+        "p_chave": chave,
+        "p_dia": dia,
+        "p_limite": int(limite),
+        "p_expira_em": expira_em,
+    }))
+
+
+def consumir_global(chave, dia, limite, expira_em):
+    """Consome uma unidade do limite global; None quando o limite acabou."""
+    return _valor_rpc(_rpc("consumir_global", {
+        "p_chave": chave,
+        "p_dia": dia,
+        "p_limite": int(limite),
+        "p_expira_em": expira_em,
+    }))
+
+
+def consumir_status(chave, dia, limite, expira_em):
+    """Consome uma consulta de andamento (60 por minuto por IP)."""
+    return _valor_rpc(_rpc("consumir_limite", {
+        "p_chave": chave,
+        "p_dia": dia,
+        "p_limite": int(limite),
+        "p_expira_em": expira_em,
+    }))

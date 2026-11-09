@@ -27,6 +27,9 @@ A API está publicada em [caex-llm-wiki.vercel.app/docs](https://caex-llm-wiki.v
 |---|---|---|
 | `/api/saude` | GET | Confirma que a API está no ar |
 | `/api/perguntar` | POST | Responde usando só a wiki e devolve as fontes |
+| `/api/enviar/config` | GET | Estado público do formulário: aberto, Turnstile, limite e tipos |
+| `/api/enviar` | POST | Recebe uma fonte e cria o job em `na_fila` |
+| `/api/ingest/{uuid}` | GET | Andamento público do envio (60 consultas/min por IP) |
 
 ```bash
 curl -X POST https://caex-llm-wiki.vercel.app/api/perguntar \
@@ -82,6 +85,39 @@ python3 tools/lint_wiki.py
 
 No Windows, use `python tools/lint_wiki.py`. Os testes usam só a biblioteca padrão do Python.
 
+## API de envio
+O `POST /api/enviar` segue a ordem da especificação: abertura e chaves
+(`503`), tamanho/tipo/título/data/texto (`422`), limite por IP (`429`),
+Turnstile (`403`), PII (`422`), duplicata (`409`), limite global (`429`),
+criação do job (`201`) e avanço da fila. O limite por IP é consumido mesmo
+quando Turnstile, PII ou duplicata recusam; o global só conta jobs que chegam
+a ser criados. Duplicatas bloqueantes são `na_fila`, `processando`,
+`aguardando_revisao`, `publicado`, `sem_mudancas` e `quarentena` (também no
+`ingest_hashes` e no manifesto quando a fonte veio de envio). `falhou`,
+`expirado` e `fechado_sem_merge` permitem reenvio; o índice único parcial de
+hash resolve a corrida.
+
+`GET /api/enviar/config` devolve `aberto`, `turnstile_site_key`, `max_bytes`
+e os tipos com rótulos em português (`Ata`, `Guia`, `Relato`). O
+`GET /api/ingest/{uuid}` valida o UUID antes de consultar, limita a 60
+consultas por minuto por IP, expõe só campos públicos (`id`, `source_id`,
+`status`, `motivo`, `etapa`, `posicao_fila`, `pr_url`, `mensagem`,
+`criado_em`, `atualizado_em`) e devolve `404` para job inexistente. O UUID é
+a capacidade de acompanhamento e nunca aparece em branch, commit, PR, log ou
+notificação.
+
+`talvez_avancar_fila()` pega o job `na_fila` mais antigo, toma o lock de 30
+segundos, dispara `ingerir.yml` com `GITHUB_DISPATCH_TOKEN` e, em falha,
+incrementa `falhas_dispatch`. Depois de `MAX_FALHAS_DISPATCH`, o job vira
+`falhou`/`dispatch`, o lock é liberado e a gestão é avisada. Nenhuma mensagem
+de erro inclui o token, o UUID ou o texto da fonte.
+
+Crie as tabelas do ingest com `supabase/ingest.sql` (separado de
+`supabase/schema.sql`). Todas têm RLS ligada e nenhuma policy pública; só a
+chave secreta usada pela API acessa os dados. As RPCs são `tomar_lock_fila`,
+`liberar_lock_fila`, `marcar_pr_aberto`, `consumir_limite`, `consumir_ip` e
+`consumir_global`.
+
 ## Ingestão local (fatia vertical)
 O comando compila uma fonte local sobre uma **cópia temporária** do repositório,
 aplica as operações aceitas, roda o lint e mostra o diff. O repositório
@@ -107,6 +143,10 @@ Variáveis de ambiente:
 | `INGEST_ABERTO` | `false` | Só `true` abre o formulário |
 | `INGEST_MAX_DIA` | `20` | Limite global diário |
 | `INGEST_MAX_POR_IP` | `3` | Limite diário por IP |
+| `GITHUB_DISPATCH_TOKEN` | — | Token da Vercel para disparar `ingerir.yml` |
+| `INGEST_SALT` | — | Sal do HMAC de IP e das consultas de andamento |
+| `TURNSTILE_SITE_KEY` | — | Chave pública do Turnstile (obrigatória com `INGEST_ABERTO=true`) |
+| `TURNSTILE_SECRET_KEY` | — | Chave secreta do Turnstile (obrigatória com `INGEST_ABERTO=true`) |
 
 Contrato mínimo: o modelo recebe a wiki com linhas numeradas e hash
 (`L1 [hash=9f13] ...`) e responde em JSON com `fatos_novos`, `mudancas`,
