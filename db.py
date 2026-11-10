@@ -126,7 +126,7 @@ def _pedir(metodo, tabela, filtros=None, corpo=None, devolver=False, prefer=None
     if preferencias:
         cabecalhos["Prefer"] = ",".join(preferencias)
 
-    dados = json.dumps(corpo, ensure_ascii=False).encode("utf-8") if corpo is not None else None
+    dados = json.dumps(corpo, ensure_ascii=False, default=str).encode("utf-8") if corpo is not None else None
     pedido = urllib.request.Request(url, data=dados, headers=cabecalhos, method=metodo)
     try:
         with _abrir(pedido) as resposta:
@@ -149,7 +149,7 @@ def _rpc(funcao, corpo=None):
     """Chama uma função RPC do Postgres via `/rest/v1/rpc/<funcao>`."""
     base, cabecalhos = _base_e_cabecalhos()
     url = f"{base}/rest/v1/rpc/{funcao}"
-    dados = json.dumps(corpo or {}, ensure_ascii=False).encode("utf-8")
+    dados = json.dumps(corpo or {}, ensure_ascii=False, default=str).encode("utf-8")
     pedido = urllib.request.Request(url, data=dados, headers=cabecalhos, method="POST")
     try:
         with _abrir(pedido) as resposta:
