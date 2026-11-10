@@ -338,7 +338,7 @@
       if (!siteKey || !document.getElementById("turnstile-widget")) return;
       try {
         const turnstile = await carregarTurnstile();
-        turnstileWidgetId = turnstile.render("turnstile-widget", {
+        turnstileWidgetId = turnstile.render("#turnstile-widget", {
           sitekey: siteKey,
           size: "invisible",
           callback: guardarTokenTurnstile,
