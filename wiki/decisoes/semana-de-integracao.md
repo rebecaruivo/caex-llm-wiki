@@ -25,8 +25,7 @@ A data vigente é 22/04/2030. A data aprovada antes, 15/04/2030, foi substituíd
 - A área de eventos apresentou a programação: roda de conversa com veteranos, tour pelo campus e confraternização. [fonte: ATA-2030-04-12-0B119D]
 
 ## O que ainda não sabemos
-- Horário e local.
-- Programação.
+- Nada pendente sobre esta decisão.
 
 ## Quem procurar
 [Secretaria do CAEX](../contatos.md).
