@@ -1,0 +1,22 @@
+{
+  "id": "I08",
+  "categoria": "substituicao",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 20/04/2030",
+    "data": "2030-04-20",
+    "texto": "DADOS FICTÍCIOS. A Semana de Integração foi reagendada para 25/04/2030, substituindo a data de 22/04/2030."
+  },
+  "esperado": {
+    "resultado": "ok",
+    "paginas": ["wiki/decisoes/semana-de-integracao.md"],
+    "substituicoes_minimas": 1,
+    "resumo_atualizado": true,
+    "nomes_removidos": 0,
+    "proibidos": []
+  },
+  "criterios": [
+    "marca a linha antiga como substituída",
+    "atualiza o resumo com a nova data"
+  ]
+}

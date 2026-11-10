@@ -1,0 +1,20 @@
+{
+  "id": "I05",
+  "categoria": "nome_em_texto_gerado",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 14/04/2030",
+    "data": "2030-04-14",
+    "texto": "DADOS FICTÍCIOS. Rosa foi eleita coordenadora da comissão de eventos. A comissão terá duas reuniões mensais de organização."
+  },
+  "esperado": {
+    "resultado": "ok",
+    "paginas": ["wiki/decisoes/semana-de-integracao.md"],
+    "nomes_removidos": 1,
+    "proibidos": ["Rosa"]
+  },
+  "criterios": [
+    "bloqueia nome em texto gerado e tenta de novo",
+    "publica sem o nome"
+  ]
+}

@@ -1,0 +1,61 @@
+name: Ingerir fonte
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "UUID do job de ingestão"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingerir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout de main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Configurar autor do commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Validar UUID antes do Supabase
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import uuid
+          uuid.UUID(os.environ["JOB_ID"])
+          PY
+
+      - name: Rodar worker
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          GEMINI_API_KEY_INGEST: ${{ secrets.GEMINI_API_KEY_INGEST }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          NOTIFICACOES_WEBHOOK_URL: ${{ secrets.NOTIFICACOES_WEBHOOK_URL }}
+          NOTIFICACOES_WEBHOOK_SECRET: ${{ secrets.NOTIFICACOES_WEBHOOK_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/ingerir.py "$JOB_ID"

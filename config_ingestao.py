@@ -4,6 +4,7 @@ Os valores vêm da especificação (`docs/especificacao-ingest.md`, §11.3) e s�
 lidos uma vez na importação. Segredos nunca ficam aqui: só nomes de variáveis.
 """
 import os
+from dataclasses import dataclass
 
 # Limites de entrada.
 MAX_BYTES = 51200
@@ -22,6 +23,30 @@ FUSO = "America/Sao_Paulo"
 
 # Tipos aceitos no formulário e seu mapeamento para o manifesto.
 TIPOS = ("ata", "guia", "outro")
+
+# Origem de uma fonte submetida. `registro` fica reservado ao chat futuro.
+ORIGENS = ("web", "registro")
+
+
+@dataclass(frozen=True)
+class FonteSubmetida:
+    """Interface compartilhada entre o formulário web e o chat futuro.
+
+    A promoção de registros do chat não existe nesta versão; apenas o contrato
+    e o campo `origem` ficam prontos. `origem` inválida é rejeitada.
+    """
+
+    tipo: str
+    titulo: str
+    data_documento: str
+    texto: str
+    origem: str = "web"
+
+    def __post_init__(self):
+        if self.origem not in ORIGENS:
+            raise ValueError(
+                f"origem inválida: {self.origem!r}; use uma de {', '.join(ORIGENS)}"
+            )
 AUTORIDADE_POR_TIPO = {
     "ata": "ca-deliberativa",
     "guia": "ca-operacional",
@@ -51,6 +76,16 @@ STATUS_BLOQUEANTES = (
 # Resultados terminais que permitem reenvio.
 STATUS_REENVIAVEL = ("falhou", "expirado", "fechado_sem_merge")
 
+# Estados finais: não andam na fila nem mantêm o lock.
+STATUS_TERMINAIS = (
+    "publicado",
+    "fechado_sem_merge",
+    "sem_mudancas",
+    "quarentena",
+    "falhou",
+    "expirado",
+)
+
 # Domínio institucional aceito em texto público.
 DOMINIO_INSTITUCIONAL = "@example.edu"
 
@@ -62,13 +97,20 @@ PII_REGEX = {
     "email": r"[\w.+-]+@[\w.-]+\.\w+",
 }
 
-# Pré-filtro de injeção óbvia (lista de regexes). O classificador cobre o resto.
+# Pré-filtro de injeção óbvia (lista de regexes), conforme spec §7.2.
+# Os padrões só casam frases dirigidas à IA; palavras isoladas como
+# `ignorar`, `regra` ou `instrução` não disparam quarentena.
 PREFILTRO = (
-    r"ignore\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)\s+anteriores",
-    r"desconsidere\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)",
-    r"ignora\s+(?:as\s+)?(?:instru[cç][oõ]es|regras)",
-    r"revele\s+o\s+prompt",
-    r"system\s*prompt",
+    r"ignore\s+(?:(?:all|any|the)\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts)",
+    r"ignore\s+(?:as|todas\s+as)\s+(?:instru[cç][oõ]es|regras|ordens)\s+(?:anteriores|acima)",
+    r"desconsidere\s+(?:as|todas\s+as)\s+(?:instru[cç][oõ]es|regras)",
+    r"voc[êe]\s+[ée]\s+um(?:a)?\s+(?:assistente|modelo|ia)\b",
+    r"you\s+are\s+(?:now\s+)?an?\s+(?:ai|assistant|model)\b",
+    r"(?:system|developer)\s+prompt",
+    r"prompt\s+do\s+sistema",
+    r"(?:reveal|show|print|repeat)\s+(?:your|the)\s+(?:system\s+prompt|instructions)",
+    r"(?:mostre|revele|imprima|repita)\s+(?:o|as|suas)\s+(?:prompt|instru[cç][oõ]es)",
+    r"jailbreak|DAN\s+mode",
 )
 
 

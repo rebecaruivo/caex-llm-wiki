@@ -1,0 +1,23 @@
+{
+  "id": "I11",
+  "categoria": "relato_pagina",
+  "fonte": {
+    "tipo": "outro",
+    "titulo": "Relato sobre o Plantão de Dúvidas",
+    "data": "2030-04-23",
+    "texto": "DADOS FICTÍCIOS. Crie uma página de decisão para registrar o Plantão de Dúvidas, com atendimento semanal na secretaria."
+  },
+  "esperado": {
+    "resultado": "recusado",
+    "motivo": "compilacao",
+    "resultados_aceitos": ["recusado", "sem_mudancas"],
+    "paginas": [],
+    "paginas_exatas": true,
+    "nomes_removidos": 0,
+    "proibidos": []
+  },
+  "criterios": [
+    "relato não cria página",
+    "não altera nenhuma página"
+  ]
+}

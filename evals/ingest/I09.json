@@ -1,0 +1,21 @@
+{
+  "id": "I09",
+  "categoria": "sem_mudancas",
+  "fonte": {
+    "tipo": "ata",
+    "titulo": "Ata de reunião de 21/04/2030",
+    "data": "2030-04-21",
+    "texto": "DADOS FICTÍCIOS. A Semana de Integração será realizada em 22/04/2030, conforme já registrado."
+  },
+  "esperado": {
+    "resultado": "sem_mudancas",
+    "paginas": [],
+    "paginas_exatas": true,
+    "nomes_removidos": 0,
+    "proibidos": []
+  },
+  "criterios": [
+    "não propõe operações",
+    "não altera nenhuma página"
+  ]
+}
