@@ -105,6 +105,8 @@ button { font: inherit; }
 .or-badge--rascunho { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
 .or-badge--neutro { color: var(--ink-muted); background: transparent; border-color: var(--line-strong); }
 
+   [hidden] { display: none !important; }
+
 /* ===== Avisos ===== */
 .or-notice {
   display: grid; grid-template-columns: 20px 1fr; gap: var(--space-1) var(--space-3);
