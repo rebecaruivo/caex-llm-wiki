@@ -1,12 +1,72 @@
 {
-  "atualizado_em": "2030-04-06",
+  "atualizado_em": "2026-11-10",
   "aviso": "Todas as fontes são fictícias.",
   "fontes": [
-    {"id": "ATA-2030-03-10", "titulo": "Ata de assembleia de 10/03/2030", "tipo": "ata-assembleia", "autoridade": "ca-deliberativa", "data": "2030-03-10", "arquivo": "sources/atas/2030-03-10-assembleia.md", "uso": "wiki"},
-    {"id": "ATA-2030-03-18", "titulo": "Ata de reunião de 18/03/2030", "tipo": "ata-reuniao", "autoridade": "ca-deliberativa", "data": "2030-03-18", "arquivo": "sources/atas/2030-03-18-reuniao.md", "uso": "wiki"},
-    {"id": "ATA-2030-04-02", "titulo": "Ata de reunião de 02/04/2030", "tipo": "ata-reuniao", "autoridade": "ca-deliberativa", "data": "2030-04-02", "arquivo": "sources/atas/2030-04-02-reuniao.md", "uso": "wiki"},
-    {"id": "GUIA-GT-2030", "titulo": "Guia de grupos de trabalho", "tipo": "guia", "autoridade": "ca-operacional", "data": "2030-02-01", "arquivo": "sources/guias/guia-grupos-de-trabalho.md", "uso": "wiki"},
-    {"id": "CONTATOS-2030", "titulo": "Contatos do CAEX", "tipo": "contatos", "autoridade": "ca-operacional", "data": "2030-02-01", "arquivo": "sources/contatos/contatos.md", "uso": "wiki"},
-    {"id": "SUG-2030-04-05", "titulo": "Sugestão recebida em 05/04/2030", "tipo": "sugestao", "autoridade": "nao-confiavel", "data": "2030-04-05", "arquivo": "sources/quarentena/sugestao-2030-04-05.md", "uso": "quarentena"}
+    {
+      "id": "ATA-2030-03-10",
+      "titulo": "Ata de assembleia de 10/03/2030",
+      "tipo": "ata-assembleia",
+      "autoridade": "ca-deliberativa",
+      "data": "2030-03-10",
+      "arquivo": "sources/atas/2030-03-10-assembleia.md",
+      "uso": "wiki"
+    },
+    {
+      "id": "ATA-2030-03-18",
+      "titulo": "Ata de reunião de 18/03/2030",
+      "tipo": "ata-reuniao",
+      "autoridade": "ca-deliberativa",
+      "data": "2030-03-18",
+      "arquivo": "sources/atas/2030-03-18-reuniao.md",
+      "uso": "wiki"
+    },
+    {
+      "id": "ATA-2030-04-02",
+      "titulo": "Ata de reunião de 02/04/2030",
+      "tipo": "ata-reuniao",
+      "autoridade": "ca-deliberativa",
+      "data": "2030-04-02",
+      "arquivo": "sources/atas/2030-04-02-reuniao.md",
+      "uso": "wiki"
+    },
+    {
+      "id": "GUIA-GT-2030",
+      "titulo": "Guia de grupos de trabalho",
+      "tipo": "guia",
+      "autoridade": "ca-operacional",
+      "data": "2030-02-01",
+      "arquivo": "sources/guias/guia-grupos-de-trabalho.md",
+      "uso": "wiki"
+    },
+    {
+      "id": "CONTATOS-2030",
+      "titulo": "Contatos do CAEX",
+      "tipo": "contatos",
+      "autoridade": "ca-operacional",
+      "data": "2030-02-01",
+      "arquivo": "sources/contatos/contatos.md",
+      "uso": "wiki"
+    },
+    {
+      "id": "SUG-2030-04-05",
+      "titulo": "Sugestão recebida em 05/04/2030",
+      "tipo": "sugestao",
+      "autoridade": "nao-confiavel",
+      "data": "2030-04-05",
+      "arquivo": "sources/quarentena/sugestao-2030-04-05.md",
+      "uso": "quarentena"
+    },
+    {
+      "id": "ATA-2030-04-12-0B119D",
+      "titulo": "Reunião de 12/04/2030",
+      "tipo": "ata",
+      "autoridade": "ca-deliberativa",
+      "data": "2030-04-12",
+      "arquivo": "sources/atas/ATA-2030-04-12-0B119D.md",
+      "uso": "wiki",
+      "origem": "envio",
+      "submetido_em": "2026-11-10T14:31:11.214885+00:00",
+      "hash": "0b119da01761548dfada1c0f99eb8c1ce61e799e75688fcc5670a27ce8f6e6c4"
+    }
   ]
 }
