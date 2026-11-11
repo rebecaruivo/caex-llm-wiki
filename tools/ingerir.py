@@ -89,6 +89,27 @@ def _atualizar(db_mod, job_id, campos, *, evento=None, detalhe=None):
         db_mod.registrar_evento_ingest(job_id, evento, detalhe or {})
 
 
+LIMITE_ERROS = 10
+LIMITE_CARACTERES_ERRO = 300
+
+
+def erros_seguros(erros, nomes=None):
+    """Erros prontos para o banco e para o log público do Actions.
+
+    Troca nomes detectados por `[nome removido]`, mascara PII óbvia e corta o
+    tamanho. Mensagens de erro podem repetir trechos gerados a partir da fonte.
+    """
+    limpos = []
+    for erro in list(erros or [])[:LIMITE_ERROS]:
+        texto = ingerir.substituir_nomes(str(erro), list(nomes or []))
+        for rotulo, padrao in ingerir.PII_REGEX.items():
+            texto = re.sub(padrao, f"[{rotulo} removido]", texto)
+        if len(texto) > LIMITE_CARACTERES_ERRO:
+            texto = texto[: LIMITE_CARACTERES_ERRO - 1] + "…"
+        limpos.append(texto)
+    return limpos
+
+
 def _falhar_job(db_mod, job, job_id, motivo, iso_agora, notificar):
     campos = {
         "status": "falhou",
@@ -326,13 +347,11 @@ def _executar_job(
         "atualizado_em": iso_agora,
         "fechado_em": iso_agora,
     }
-    _atualizar(
-        db_mod,
-        job_id,
-        campos,
-        evento=status,
-        detalhe={"motivo": resultado.get("motivo")} if resultado.get("motivo") else {},
-    )
+    erros = erros_seguros(resultado.get("erros"), triagem["nomes"])
+    detalhe = {"motivo": resultado.get("motivo")} if resultado.get("motivo") else {}
+    if erros:
+        detalhe["erros"] = erros
+    _atualizar(db_mod, job_id, campos, evento=status, detalhe=detalhe)
     if job.get("hash_conteudo"):
         db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], status)
     db_mod.liberar_lock_fila(job_id)
@@ -343,7 +362,7 @@ def _executar_job(
         "status": status,
         "source_id": job.get("source_id"),
         "motivo": resultado.get("motivo"),
-        "erros": resultado.get("erros") or [],
+        "erros": erros,
     }
 
 

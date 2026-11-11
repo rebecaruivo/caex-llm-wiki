@@ -1446,7 +1446,8 @@ def compilar(
     aplicada de forma atômica, o lint roda no repositório e, se algo falhar,
     a wiki volta ao estado anterior antes da próxima tentativa. Depois de
     esgotar as tentativas, levanta `ErroCompilacao` com `motivo` (`lint`,
-    `schema`, `pii` ou `compilacao`) e a lista exata de erros.
+    `schema`, `pii` ou `compilacao`) e a lista exata de erros. Falha da API
+    do Gemini encerra na hora com `motivo` `infra`, sem nova tentativa.
     """
     fonte = validar_fonte(fonte)
     raiz = Path(raiz)
@@ -1470,9 +1471,10 @@ def compilar(
         try:
             bruto = chamar_modelo(prompt)
         except ErroApi as erro:
-            motivo = "compilacao"
-            erros_anteriores = [str(erro)]
-            continue
+            # A chamada já repetiu erros temporários (429, 5xx, conexão) por
+            # dentro. Tentar de novo aqui multiplicaria chamadas e esperas
+            # sem chance real de sucesso, e o erro não é culpa da fonte.
+            raise ErroCompilacao("infra", [str(erro)], tentativa) from erro
 
         try:
             dados = _validar_proposta(_carregar_resposta(bruto))

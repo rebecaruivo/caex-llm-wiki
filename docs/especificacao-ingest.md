@@ -550,7 +550,7 @@ Regras aplicadas por código, não pelo modelo:
 - `wiki/contatos.md` é somente da gestão: mudança de contato vira pendência, nunca edição.
 - `wiki/glossario.md` pode ser editado, com citação em toda linha factual nova.
 
-Violação de qualquer regra gera nova tentativa com a lista exata de erros. Depois de 3 tentativas, o job termina como `falhou` (`lint`, `schema`, `pii` ou `compilacao`) e a gestão é notificada.
+Violação de qualquer regra gera nova tentativa com a lista exata de erros. Depois de 3 tentativas, o job termina como `falhou` (`lint`, `schema`, `pii` ou `compilacao`) e a gestão é notificada. Falha da API do Gemini (já repetida por dentro em erros temporários) encerra na hora como `falhou`/`infra`, sem consumir outra tentativa. Os erros da última tentativa vão para o evento `falhou` em `detalhe.erros`, no máximo 10, com nomes detectados trocados por `[nome removido]`, PII óbvia mascarada e até 300 caracteres cada; o log do Actions mostra a mesma versão limpa, e a notificação não leva os erros.
 
 ### 7.5 Fonte derivada e nomes
 
