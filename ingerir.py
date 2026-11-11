@@ -157,13 +157,34 @@ ESQUEMA_RESPOSTA = {
             "type": "ARRAY",
             "items": {
                 "type": "OBJECT",
+                # Em modo estruturado o Gemini só devolve campos declarados aqui.
+                # Todo campo lido por `aplicar_operacoes` precisa estar listado;
+                # `tests/test_esquema_compilador.py` confere isso.
                 "properties": {
-                    "tipo": {"type": "STRING"},
+                    "tipo": {"type": "STRING", "enum": list(TIPOS_OPERACAO)},
                     "pagina": {"type": "STRING"},
                     "secao": {"type": "STRING"},
                     "texto": {"type": "STRING"},
                     "linha": {"type": "INTEGER"},
                     "hash": {"type": "STRING"},
+                    # marcar_substituida
+                    "nova_fonte": {"type": "STRING"},
+                    "data": {"type": "STRING"},
+                    # criar_pagina
+                    "caminho": {"type": "STRING"},
+                    "tipo_pagina": {"type": "STRING", "enum": ["processo", "decisao"]},
+                    "titulo": {"type": "STRING"},
+                    "secoes": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "secao": {"type": "STRING"},
+                                "linhas": {"type": "ARRAY", "items": {"type": "STRING"}},
+                            },
+                            "required": ["secao", "linhas"],
+                        },
+                    },
                 },
                 "required": ["tipo"],
             },
@@ -782,6 +803,30 @@ def _limpar_titulo(titulo, nomes):
     return titulo
 
 
+def _secoes_como_dict(secoes):
+    """Aceita as seções da página nova como lista ou como objeto.
+
+    O esquema do Gemini usa uma lista `[{"secao": ..., "linhas": [...]}]`,
+    porque nomes de seção com espaço e acento não cabem bem como chaves do
+    esquema. O formato antigo, um objeto `{"Resumo": [...]}`, continua aceito.
+    """
+    if secoes is None:
+        return {}
+    if isinstance(secoes, dict):
+        return secoes
+    if not isinstance(secoes, list):
+        raise ErroOperacao("'secoes' da página nova precisa ser uma lista de seções")
+    resultado = {}
+    for item in secoes:
+        if not isinstance(item, dict) or not isinstance(item.get("secao"), str):
+            raise ErroOperacao("cada seção da página nova precisa de 'secao' e 'linhas'")
+        nome = item["secao"]
+        if nome in resultado:
+            raise ErroOperacao(f"seção repetida na página nova: {nome!r}")
+        resultado[nome] = item.get("linhas") or []
+    return resultado
+
+
 def _linhas_de_conteudo(valor, formatar=True):
     if isinstance(valor, str):
         itens = [valor]
@@ -1083,9 +1128,7 @@ def aplicar_operacoes(
                     "tipo_pagina precisa bater com a pasta da página nova"
                 )
             titulo = _limpar_titulo(operacao.get("titulo"), nomes)
-            secoes = operacao.get("secoes") or {}
-            if not isinstance(secoes, dict):
-                raise ErroOperacao("'secoes' da página nova precisa ser um objeto")
+            secoes = _secoes_como_dict(operacao.get("secoes"))
             conteudo = {}
             for chave, valor in secoes.items():
                 nome_secao = _normalizar_secao(chave)
