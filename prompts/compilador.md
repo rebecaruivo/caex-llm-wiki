@@ -63,13 +63,13 @@ Responda apenas com um objeto JSON. Antes das operações, preencha as listas:
       "caminho": "wiki/decisoes/nova-decisao.md",
       "tipo_pagina": "decisao",
       "titulo": "Nova decisão",
-      "secoes": {
-        "Resumo": ["Resumo curto."],
-        "O que as fontes dizem": ["Fato novo. [fonte: ATA-…]"],
-        "O que ainda não sabemos": ["O que falta."],
-        "Quem procurar": ["Secretaria."],
-        "Páginas relacionadas": ["[Índice](../index.md)"]
-      }
+      "secoes": [
+        {"secao": "Resumo", "linhas": ["Resumo curto."]},
+        {"secao": "O que as fontes dizem", "linhas": ["Fato novo. [fonte: ATA-…]"]},
+        {"secao": "O que ainda não sabemos", "linhas": ["O que falta."]},
+        {"secao": "Quem procurar", "linhas": ["Secretaria."]},
+        {"secao": "Páginas relacionadas", "linhas": ["[Índice](../index.md)"]}
+      ]
     }
   ]
 }
