@@ -892,21 +892,22 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
             relatorio["locks_orfaos"] += 1
             estado = db.estado_fila()
 
-    # 6. Lock antigo com PR aberto: renova ou reconcilia.
+    # 6. PR do lock: confere todo dia se fechou; lembra a gestão após LOCK_DIAS.
     estado = db.estado_fila()
     if estado and estado.get("job_id"):
         job = db.buscar_job_ingest(estado["job_id"])
         if job and job.get("status") not in config_ingestao.STATUS_TERMINAIS:
             if estado.get("aberto_em"):
-                if _mais_antigo_que(estado["aberto_em"], momento, dias=config_ingestao.LOCK_DIAS):
-                    numero = estado.get("pr_numero") or job.get("pr_numero")
-                    try:
-                        pr = buscar_pr(numero)
-                    except github_ingest.ErroGitHub:
-                        pr = _GITHUB_INDISPONIVEL
-                    if pr is _GITHUB_INDISPONIVEL:
-                        relatorio["github_falhou"] = True
-                    elif pr and pr.get("state") == "open":
+                antigo = _mais_antigo_que(estado["aberto_em"], momento, dias=config_ingestao.LOCK_DIAS)
+                numero = estado.get("pr_numero") or job.get("pr_numero")
+                try:
+                    pr = buscar_pr(numero)
+                except github_ingest.ErroGitHub:
+                    pr = _GITHUB_INDISPONIVEL
+                if pr is _GITHUB_INDISPONIVEL:
+                    relatorio["github_falhou"] = True
+                elif pr and pr.get("state") == "open":
+                    if antigo:
                         db.atualizar_estado_fila({"aberto_em": iso_agora})
                         notificacoes.notificar_job(
                             notificar,
@@ -915,17 +916,18 @@ def executar_manutencao(*, agora=None, buscar_pr=None, buscar_pr_branch=None, no
                             pr_url=pr.get("url") or job.get("pr_url"),
                         )
                         relatorio["locks_antigos"] += 1
-                    elif pr is not None:
-                        reconciliacao.fechar_job(
-                            db,
-                            job,
-                            mesclado=bool(pr.get("merged")),
-                            agora=iso_agora,
-                        )
-                        relatorio["reconciliados"] += 1
-                    else:
-                        _falhar_manutencao(db, job, "infra", iso_agora, notificar)
-                        relatorio["locks_antigos"] += 1
+                elif pr is not None:
+                    # Fechado ou mesclado e o workflow de PR fechado não reconciliou.
+                    reconciliacao.fechar_job(
+                        db,
+                        job,
+                        mesclado=bool(pr.get("merged")),
+                        agora=iso_agora,
+                    )
+                    relatorio["reconciliados"] += 1
+                elif antigo:
+                    _falhar_manutencao(db, job, "infra", iso_agora, notificar)
+                    relatorio["locks_antigos"] += 1
             elif job.get("status") == "aguardando_revisao":
                 try:
                     pr = buscar_pr_branch(f"ingest/{job['source_id']}")

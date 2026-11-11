@@ -439,7 +439,7 @@ Executa, de forma idempotente:
 3. Apaga jobs em estado terminal há mais de 90 dias e seus eventos.
 4. Marca `processando` parado há mais de 15 minutos como `falhou`/`timeout`, libera o lock e notifica.
 5. Remove lock órfão: se `ingest_estado.job_id` aponta para job terminal ou inexistente, libera. Se aponta para `na_fila` com `ultima_tentativa` mais antiga que `LOCK_DIAS`, marca `falhou`/`dispatch`, libera e notifica.
-6. Verifica lock antigo: se `aberto_em` tem mais de 7 dias, consulta o PR na API pública do GitHub. Se estiver aberto, renova `aberto_em` e notifica `lock_antigo`; se estiver fechado ou mesclado, reconcilia o job, libera o lock e avança. Se `aberto_em` estiver nulo e o job for `aguardando_revisao`, procura um PR aberto pelo branch `ingest/<source_id>`; se achar, preenche `pr_numero`/`pr_url` e trata como aberto; se não achar, marca `falhou`/`infra`, libera e avança. Se o GitHub não responder, tenta de novo na próxima execução.
+6. Verifica o PR do lock: se `aberto_em` está preenchido, consulta o PR na API pública do GitHub em toda execução. Se estiver fechado ou mesclado, reconcilia o job, libera o lock e avança, qualquer que seja a idade (cobre falha do `ingest-pr-fechado.yml`). Se estiver aberto e `aberto_em` tiver mais de `LOCK_DIAS`, renova `aberto_em` e notifica `lock_antigo`. Se o PR não existir e `aberto_em` tiver mais de `LOCK_DIAS`, marca `falhou`/`infra`. Se `aberto_em` estiver nulo e o job for `aguardando_revisao`, procura um PR aberto pelo branch `ingest/<source_id>`; se achar, preenche `pr_numero`/`pr_url` e trata como aberto; se não achar, marca `falhou`/`infra`, libera e avança. Se o GitHub não responder, tenta de novo na próxima execução.
 7. Chama `talvez_avancar_fila()`.
 
 `vercel.json`:
