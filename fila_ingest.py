@@ -8,13 +8,14 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import timedelta
 
 import config_ingestao
 import db as db_padrao
 import github_ingest
 import notificacoes
 from tempo import agora as agora_padrao
-from tempo import iso_utc
+from tempo import instante, iso_utc
 
 
 class ErroDispatch(Exception):
@@ -48,6 +49,48 @@ def disparar_worker(job_id, *, repositorio=None):
         raise ErroDispatch("sem conexão com o GitHub") from None
 
 
+def liberar_job_travado(*, momento, db_mod, notificar=None):
+    """Libera o lock de um job parado em `processando` além do tempo limite.
+
+    O worker roda no GitHub Actions com limite de 15 minutos. Se o job ainda
+    está `processando` depois disso, o worker morreu sem avisar. Antes, só a
+    manutenção diária percebia; agora cada envio e cada consulta de andamento
+    também percebem, e a fila volta a andar em minutos, não em até 24 horas.
+    Devolve o `source_id` liberado, ou None.
+    """
+    estado = db_mod.estado_fila()
+    if not estado or not estado.get("job_id"):
+        return None
+    job = db_mod.buscar_job_ingest(estado["job_id"])
+    if not job or job.get("status") != "processando":
+        return None
+    ultimo = instante(job.get("atualizado_em"))
+    limite = momento - timedelta(minutes=config_ingestao.TIMEOUT_PROCESSANDO_MINUTOS)
+    if ultimo is not None and ultimo >= limite:
+        return None
+
+    iso_agora = iso_utc(momento)
+    campos = {
+        "status": "falhou",
+        "motivo": "timeout",
+        "etapa": None,
+        "atualizado_em": iso_agora,
+        "fechado_em": iso_agora,
+    }
+    db_mod.atualizar_job_ingest(job["id"], campos)
+    if job.get("hash_conteudo"):
+        db_mod.guardar_hash_ingest(job["hash_conteudo"], job["source_id"], "falhou")
+    db_mod.registrar_evento_ingest(job["id"], "falhou", {"motivo": "timeout"})
+    db_mod.liberar_lock_fila(job["id"])
+    notificacoes.notificar_job(
+        notificar if notificar is not None else notificacoes.notificar,
+        "falhou",
+        {**job, **campos},
+        status="falhou",
+    )
+    return job.get("source_id")
+
+
 def talvez_avancar_fila(
     *, disparar=None, agora=None, db_mod=None, notificar=None
 ):
@@ -55,6 +98,11 @@ def talvez_avancar_fila(
     db_mod = db_mod or db_padrao
     if not db_mod.configurado():
         return {"disparado": False, "motivo": "banco_nao_configurado"}
+    momento = agora() if callable(agora) else (agora or agora_padrao())
+    try:
+        liberar_job_travado(momento=momento, db_mod=db_mod, notificar=notificar)
+    except db_padrao.ErroBanco as erro:
+        print(f"Falha ao conferir job travado: {erro}", flush=True)
     try:
         job = db_mod.job_mais_antigo_na_fila()
     except db_padrao.ErroBanco as erro:
@@ -73,7 +121,6 @@ def talvez_avancar_fila(
     if not tomou:
         return {"disparado": False, "motivo": "lock"}
 
-    momento = agora() if callable(agora) else (agora or agora_padrao())
     iso_agora = iso_utc(momento)
     try:
         (disparar or disparar_worker)(job["id"])
