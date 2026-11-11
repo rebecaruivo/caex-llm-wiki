@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from pathlib import Path
 from uuid import UUID
 
@@ -104,7 +105,35 @@ def _falhar_job(db_mod, job, job_id, motivo, iso_agora, notificar):
     return {"status": "falhou", "source_id": job.get("source_id"), "motivo": motivo}
 
 
-def executar_job(
+def executar_job(job_id, *, db_mod=None, notificar=notificacoes.notificar, agora=None, **resto):
+    """Executa um job e garante que um erro inesperado não trave a fila.
+
+    Se algo fora do previsto quebrar depois que o job virou `processando`
+    (banco instável, falha de git, bug), o job termina como `falhou`/`infra`
+    e o lock é liberado na hora, em vez de esperar a manutenção diária.
+    """
+    try:
+        return _executar_job(job_id, db_mod=db_mod, notificar=notificar, agora=agora, **resto)
+    except Exception as erro:  # noqa: BLE001 - último recurso para não travar a fila
+        return _falhar_por_erro_inesperado(job_id, db_mod or db, notificar, agora, erro)
+
+
+def _falhar_por_erro_inesperado(job_id, db_mod, notificar, agora, erro):
+    """Registra o erro no log sem a mensagem (que pode conter texto da fonte)."""
+    print(f"Erro inesperado no worker: {type(erro).__name__}", file=sys.stderr)
+    print("".join(traceback.format_tb(erro.__traceback__)), file=sys.stderr)
+    try:
+        job_id = _uuid(job_id)
+        job = db_mod.buscar_job_ingest(job_id)
+        if job and job.get("status") == "processando":
+            momento = tempo.como_datetime(agora() if callable(agora) else agora)
+            return _falhar_job(db_mod, job, job_id, "infra", _iso(momento), notificar)
+    except Exception as segundo:  # noqa: BLE001 - banco fora do ar: a manutenção resolve
+        print(f"Não foi possível marcar o job como falhou: {type(segundo).__name__}", file=sys.stderr)
+    return {"status": "falhou", "motivo": "infra"}
+
+
+def _executar_job(
     job_id,
     *,
     raiz=RAIZ,
