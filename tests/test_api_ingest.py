@@ -113,6 +113,9 @@ class FakeDB:
         fila = [job for job in self.jobs if job.get("status") == "na_fila"]
         return fila[0] if fila else None
 
+    def estado_fila(self):
+        return {"job_id": self.lock}
+
     def tomar_lock_fila(self, job_id, intervalo_segundos):
         self.lock = str(job_id)
         return True

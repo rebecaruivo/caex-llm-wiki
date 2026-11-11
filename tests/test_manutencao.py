@@ -371,6 +371,45 @@ class PassosManutencaoTest(BaseManutencao):
         self.assertIsNone(job_aberto["conteudo_bruto"])
         self.assertEqual(self.fake.hashes[job_aberto["hash_conteudo"]]["resultado"], "fechado_sem_merge")
 
+    def test_passo6_pr_fechado_recente_reconcilia_no_mesmo_dia(self):
+        """Se o workflow de PR fechado falhar, a fila não espera LOCK_DIAS."""
+        job_aberto = job(status="aguardando_revisao", pr_numero=12)
+        self.fake.jobs = [job_aberto]
+        self.fake.estado.update({
+            "job_id": job_aberto["id"],
+            "aberto_em": iso(AGORA - timedelta(hours=6)),
+        })
+        self.executar(
+            buscar_pr=lambda numero: {"numero": 12, "state": "closed", "merged": True}
+        )
+        self.assertEqual(job_aberto["status"], "publicado")
+        self.assertIsNone(self.fake.estado["job_id"])
+
+    def test_passo6_pr_aberto_recente_nao_renova_nem_notifica(self):
+        job_aberto = job(status="aguardando_revisao", pr_numero=12)
+        self.fake.jobs = [job_aberto]
+        aberto_em = iso(AGORA - timedelta(days=2))
+        self.fake.estado.update({"job_id": job_aberto["id"], "aberto_em": aberto_em})
+        consultas = []
+        self.executar(
+            buscar_pr=lambda numero: consultas.append(numero)
+            or {"numero": 12, "state": "open", "merged": False}
+        )
+        self.assertEqual(consultas, [12])
+        self.assertEqual(self.fake.estado["aberto_em"], aberto_em)
+        self.assertEqual(self.payloads, [])
+        self.assertEqual(job_aberto["status"], "aguardando_revisao")
+
+    def test_passo6_pr_sumido_recente_nao_marca_falhou(self):
+        job_aberto = job(status="aguardando_revisao", pr_numero=12)
+        self.fake.jobs = [job_aberto]
+        self.fake.estado.update({
+            "job_id": job_aberto["id"],
+            "aberto_em": iso(AGORA - timedelta(days=1)),
+        })
+        self.executar(buscar_pr=lambda numero: None)
+        self.assertEqual(job_aberto["status"], "aguardando_revisao")
+
     def test_passo6_aberto_em_nulo_busca_pr_por_branch(self):
         job_aberto = job(status="aguardando_revisao")
         self.fake.jobs = [job_aberto]
