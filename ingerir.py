@@ -452,18 +452,20 @@ def remover_nomes(texto, nomes=None):
 
 
 def _substituir_com_contagem(texto, nomes):
+    """Substitui por palavra inteira, como `contem_nome`: `Ana` não toca `Anabela`."""
     total = 0
     for nome in _nomes_ordenados(nomes):
-        total += texto.count(nome)
-        texto = texto.replace(nome, MARCADOR_NOME)
+        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
+        texto, quantidade = re.subn(padrao, MARCADOR_NOME, texto)
+        total += quantidade
     return texto, total
 
 
 def substituir_nomes(texto, nomes):
     """Troca cada span exato de nome por `[nome removido]`, em todas as ocorrências.
 
-    A comparação é sensível a maiúsculas e usa o span integral: `Rosa` vira
-    `[nome removido]`, mas `camiseta rosa` não muda.
+    A comparação é sensível a maiúsculas e por palavra inteira: `Rosa` vira
+    `[nome removido]`, mas `camiseta rosa` e `Rosaflor` não mudam.
     """
     return _substituir_com_contagem(texto, nomes)[0]
 

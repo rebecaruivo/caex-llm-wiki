@@ -93,7 +93,18 @@ DOMINIO_INSTITUCIONAL = "@example.edu"
 PII_REGEX = {
     "cpf": r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b",
     "ra": r"\bRA\b[\s:.-]*\d{4,}\b",
-    "telefone": r"(?:\+?55[\s.-]*)?(?:\(?\d{2}\)?[\s.-]*)?\d{4,5}[\s.-]?\d{4}\b",
+    # Telefone exige um sinal de que é telefone: DDD entre parênteses, +55,
+    # DDD separado do número, 11 dígitos de celular ou celular 9XXXX-XXXX.
+    # Assim `12345678 unidades` e `gestão 2030-2031` não são recusados.
+    "telefone": (
+        r"(?<!\d)(?:"
+        r"(?:\+?55[\s.-]*)?\(\d{2}\)[\s.-]*\d{4,5}[\s.-]?\d{4}"
+        r"|\+?55[\s.-]*\d{2}[\s.-]*\d{4,5}[\s.-]?\d{4}"
+        r"|\d{2}[\s.-]+9?\d{4}[\s.-]?\d{4}"
+        r"|\d{2}9\d{8}"
+        r"|9\d{4}[\s.-]?\d{4}"
+        r")(?!\d)"
+    ),
     "email": r"[\w.+-]+@[\w.-]+\.\w+",
 }
 

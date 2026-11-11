@@ -162,6 +162,20 @@ class SubstituirNomesTest(unittest.TestCase):
             "[nome removido] falou com [nome removido] e depois com [nome removido].",
         )
 
+    def test_nome_dentro_de_outra_palavra_nao_muda(self):
+        texto = "Ana e Anabela votaram. Ana abriu."
+        self.assertEqual(
+            ingerir.substituir_nomes(texto, ["Ana"]),
+            "[nome removido] e Anabela votaram. [nome removido] abriu.",
+        )
+        self.assertEqual(ingerir.contar_substituicoes(texto, ["Ana"]), 2)
+
+    def test_nome_com_acento_e_por_palavra_inteira(self):
+        self.assertEqual(
+            ingerir.substituir_nomes("Inês e Inêsa.", ["Inês"]),
+            "[nome removido] e Inêsa.",
+        )
+
     def test_camiseta_rosa_nao_muda(self):
         self.assertEqual(
             ingerir.substituir_nomes("Rosa vestia camiseta rosa.", ["Rosa"]),

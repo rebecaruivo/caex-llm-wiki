@@ -60,6 +60,31 @@ class PiiTest(unittest.TestCase):
     def test_detecta_telefone(self):
         self.assertIn("telefone", ingerir.detectar_pii("Ligar para (11) 98765-4321"))
 
+    def test_detecta_formatos_de_telefone(self):
+        for texto in (
+            "(11) 3456-7890",
+            "+55 11 98765-4321",
+            "+5511987654321",
+            "11 98765-4321",
+            "11987654321",
+            "98765-4321",
+            "987654321",
+        ):
+            with self.subTest(texto=texto):
+                self.assertIn("telefone", ingerir.detectar_pii(texto))
+
+    def test_numeros_comuns_em_ata_nao_sao_telefone(self):
+        for texto in (
+            "Compramos 12345678 unidades.",
+            "Gestão 2030-2031.",
+            "Orçamento de R$ 12.345.678.",
+            "Ver ATA-2030-04-10.",
+            "Processo 20301234.",
+            "Código 1234567890123.",
+        ):
+            with self.subTest(texto=texto):
+                self.assertNotIn("telefone", ingerir.detectar_pii(texto))
+
     def test_detecta_email_nao_institucional(self):
         self.assertIn("email", ingerir.detectar_pii("Contato: pessoa@gmail.com"))
 
