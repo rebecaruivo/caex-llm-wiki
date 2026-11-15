@@ -1,5 +1,5 @@
 {
-  "atualizado_em": "2026-11-10",
+  "atualizado_em": "2026-11-15",
   "aviso": "Todas as fontes são fictícias.",
   "fontes": [
     {
@@ -67,6 +67,18 @@
       "origem": "envio",
       "submetido_em": "2026-11-10T14:31:11.214885+00:00",
       "hash": "0b119da01761548dfada1c0f99eb8c1ce61e799e75688fcc5670a27ce8f6e6c4"
+    },
+    {
+      "id": "ATA-2030-04-28-59D828",
+      "titulo": "Ata de reunião do CAEX, 28/04/2030.",
+      "tipo": "ata",
+      "autoridade": "ca-deliberativa",
+      "data": "2030-04-28",
+      "arquivo": "sources/atas/ATA-2030-04-28-59D828.md",
+      "uso": "wiki",
+      "origem": "envio",
+      "submetido_em": "2026-11-15T20:46:18.323465+00:00",
+      "hash": "59d82859037bd2329aff7d39473d8f3dddfc151a2bc930c9ada17e31288ae46d"
     }
   ]
 }
