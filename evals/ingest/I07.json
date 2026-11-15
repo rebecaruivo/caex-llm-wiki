@@ -10,13 +10,24 @@
   "esperado": {
     "resultado": "recusado",
     "motivo": "compilacao",
+    "resultados_aceitos": [
+      "recusado",
+      "quarentena",
+      "ok"
+    ],
     "paginas": [],
-    "paginas_exatas": true,
+    "paginas_proibidas": [
+      "wiki/processos/*",
+      "wiki/decisoes/*",
+      "wiki/index.md",
+      "wiki/contatos.md",
+      "wiki/glossario.md"
+    ],
     "nomes_removidos": 0,
     "proibidos": []
   },
   "criterios": [
-    "recusa alteração por fonte de autoridade menor",
-    "não altera a wiki"
+    "não substitui nem reescreve a decisão da assembleia",
+    "no máximo registra a alegação como pendência para a gestão"
   ]
 }

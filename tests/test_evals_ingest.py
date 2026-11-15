@@ -420,6 +420,7 @@ class ExecutarCasoTest(unittest.TestCase):
         resultado = self.executar(dados, classificador=classificador)
         self.assertEqual(resultado["resultado"], "quarentena")
         self.assertEqual(resultado["motivo"], "prefiltro")
+        self.assertEqual(resultado["quarentena_por"], "pre_filtro")
         self.assertEqual(resultado["paginas_alteradas"], [])
         self.assertTrue(runner.pontuar(dados, resultado)["aprovado"])
 
@@ -691,5 +692,184 @@ class MainTest(unittest.TestCase):
             self.assertNotIn("Ignore previous", stdout.getvalue())
 
 
+
+class FalhaDeApiTest(unittest.TestCase):
+    """Falha de API vira 'inconclusivo', não 'reprovado', e não apaga o caso."""
+
+    def fixture_ok(self, identificador="I01"):
+        return fixture(
+            id=identificador,
+            esperado={
+                "resultado": "ok",
+                "paginas": ["wiki/processos/exemplo.md"],
+                "nomes_removidos": 0,
+                "proibidos": [],
+            },
+        )
+
+    def rodar(self, raiz, fixtures, juiz, argv_extra=()):
+        pasta = raiz / "evals/ingest"
+        pasta.mkdir(exist_ok=True)
+        for item in fixtures:
+            (pasta / f"{item['id']}.json").write_text(json.dumps(item), encoding="utf-8")
+        chamadas = {"compilador": 0}
+
+        def compilador(prompt):
+            chamadas["compilador"] += 1
+            return compilador_adiciona(prompt)
+
+        def fabrica(modelo, chave, modelo_juiz):
+            return {"classificador": classificador_limpo, "compilador": compilador, "juiz": juiz}
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            codigo = runner.main(
+                ["--fixtures", str(pasta), "--saida", str(raiz / "evals/resultados"),
+                 "--intervalo", "0", *argv_extra],
+                fabrica_modelos=fabrica, chave="teste", raiz=raiz,
+            )
+        relatorio = sorted((raiz / "evals/resultados").glob("ingest-*.json"))[-1]
+        return codigo, json.loads(relatorio.read_text(encoding="utf-8")), chamadas, relatorio
+
+    def test_429_do_juiz_vira_inconclusivo_e_preserva_execucao(self):
+        def juiz(prompt):
+            raise ingerir.ErroApi("HTTP 429 ao chamar o Gemini (juiz)", status=429)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = criar_repo(tmp)
+            codigo, dados, _, _ = self.rodar(raiz, [self.fixture_ok()], juiz)
+        item = dados["modelos"][0]["resultados"][0]
+        self.assertEqual(codigo, 1)
+        self.assertEqual(item["situacao"], "inconclusivo")
+        # O que o compilador fez continua no relatório.
+        self.assertEqual(item["resultado"], "ok")
+        self.assertIn("wiki/processos/exemplo.md", item["paginas_alteradas"])
+        self.assertEqual(dados["modelos"][0]["inconclusivos"], 1)
+        self.assertIn("inconclusivo", dados["decisao"])
+
+    def test_cota_diaria_do_juiz_para_a_rodada(self):
+        chamadas_juiz = []
+
+        def juiz(prompt):
+            chamadas_juiz.append(1)
+            raise ingerir.ErroApi(
+                "HTTP 429: cota diária esgotada", status=429,
+                cota="GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = criar_repo(tmp)
+            _, dados, chamadas, _ = self.rodar(
+                raiz, [self.fixture_ok("I01"), self.fixture_ok("I02"), self.fixture_ok("I03")], juiz
+            )
+        situacoes = [item["situacao"] for item in dados["modelos"][0]["resultados"]]
+        self.assertEqual(situacoes, ["inconclusivo", "nao_executado", "nao_executado"])
+        self.assertEqual(len(chamadas_juiz), 1)
+        self.assertEqual(chamadas["compilador"], 1)
+
+    def test_retomar_roda_so_os_casos_sem_avaliacao(self):
+        def juiz_quebrado(prompt):
+            raise ingerir.ErroApi("HTTP 429", status=429)
+
+        def juiz_ok(prompt):
+            return json.dumps({"criterios": [{"criterio": "c", "atendido": True}]})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = criar_repo(tmp)
+            fixtures = [self.fixture_ok("I01"), self.fixture_ok("I02")]
+            _, primeiro, _, caminho = self.rodar(raiz, fixtures[:1], juiz_ok)
+            # Simula uma rodada com I01 aprovado e I02 inconclusivo.
+            primeiro["modelos"][0]["resultados"].append(
+                {**primeiro["modelos"][0]["resultados"][0], "id": "I02",
+                 "situacao": "inconclusivo", "aprovado": False, "falhas": ["API: x"]}
+            )
+            caminho.write_text(json.dumps(primeiro), encoding="utf-8")
+            codigo, dados, chamadas, _ = self.rodar(
+                raiz, fixtures, juiz_ok, ["--retomar", str(caminho)]
+            )
+        self.assertEqual(chamadas["compilador"], 1)  # só o I02 rodou
+        self.assertEqual([i["situacao"] for i in dados["modelos"][0]["resultados"]], ["aprovado", "aprovado"])
+        self.assertEqual(codigo, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class PaginasProibidasTest(unittest.TestCase):
+    def test_pagina_proibida_alterada_reprova(self):
+        dados = fixture()
+        dados["esperado"]["paginas"] = []
+        dados["esperado"]["paginas_proibidas"] = ["wiki/decisoes/*"]
+        execucao = {
+            "resultado": "ok", "motivo": None, "tentativas": 1,
+            "paginas_alteradas": ["wiki/decisoes/x.md", "wiki/pendencias.md"],
+            "nomes_removidos": 0, "nomes_em_texto_gerado": 0,
+            "proibidos_encontrados": 0, "lint_erros": 0,
+            "citacoes_invalidas": 0, "linhas_sem_citacao": 0,
+            "substituicoes": 0, "pendencias": 1, "novas_paginas": 0,
+            "resumos_atualizados": 0, "titulo_publico_sem_nomes": True,
+            "juiz_avaliado": False,
+        }
+        falhas = runner.pontuar(runner.validar_fixture(dados), execucao)["falhas"]
+        self.assertIn("página proibida alterada: wiki/decisoes/x.md", falhas)
+        self.assertNotIn("página proibida alterada: wiki/pendencias.md", falhas)
+
+
+class ResumoParaJuizTest(unittest.TestCase):
+    def test_quarentena_diz_que_nada_mudou(self):
+        fixture = {"categoria": "autoridade_menor", "esperado": {"resultado": "recusado"}}
+        execucao = {
+            "resultado": "quarentena", "motivo": "injecao", "paginas_alteradas": [],
+            "nomes_removidos": 0, "lint_erros": 0, "citacoes_invalidas": 0,
+            "linhas_sem_citacao": 0, "quarentena_por": "classificador",
+        }
+        resumo = runner._resumo_para_juiz(fixture, execucao, None, [])
+        self.assertFalse(resumo["compilador_executado"])
+        self.assertTrue(resumo["nenhuma_pagina_alterada"])
+
+    """O juiz só aprova o que vê; a linha marcada e o resumo novo precisam ir."""
+
+    def test_resumo_mostra_linha_substituida_e_resumo_novo(self):
+        from tools import run_evals_ingest as runner
+
+        fixture = {"categoria": "substituicao", "esperado": {"resultado": "ok"}}
+        execucao = {
+            "resultado": "ok",
+            "motivo": None,
+            "paginas_alteradas": ["wiki/decisoes/x.md"],
+            "nomes_removidos": 0,
+            "lint_erros": 0,
+            "citacoes_invalidas": 0,
+            "linhas_sem_citacao": 0,
+        }
+        compilacao = {
+            "fatos_novos": [],
+            "mudancas": [],
+            "operacoes": [],
+            "aplicadas": [
+                {
+                    "pagina": "wiki/decisoes/x.md",
+                    "texto": "(substituída por [fonte: B] em 2030-04-20)",
+                    "linha": 20,
+                    "conteudo": "- Data antiga, citada por Rosa. [fonte: A] (substituída por [fonte: B] em 2030-04-20)",
+                },
+                {"pagina": "wiki/decisoes/x.md", "texto": "resumo atualizado", "conteudo": "Data nova."},
+            ],
+        }
+        compilacao["pendencias"] = [
+            {"id": "P-07", "linha": "| P-07 | Rosa contesta a data. | ATA-X |", "fontes": ["ATA-X"]}
+        ]
+        execucao["titulo_publico"] = "Ata da reunião com [nome removido]"
+        execucao["nomes_no_titulo_original"] = True
+        execucao["nomes_em_texto_gerado"] = 0
+        resumo = runner._resumo_para_juiz(fixture, execucao, compilacao, ["Rosa"])
+        self.assertEqual(resumo["titulo_publico"], "Ata da reunião com [nome removido]")
+        self.assertTrue(resumo["titulo_original_tinha_nome"])
+        self.assertEqual(resumo["paginas_com_nome_detectado"], 0)
+        self.assertEqual(resumo["pendencias_registradas"][0]["id"], "P-07")
+        self.assertNotIn("Rosa", resumo["pendencias_registradas"][0]["linha"])
+        self.assertEqual(len(resumo["linhas_marcadas_como_substituidas"]), 1)
+        self.assertIn("substituída por", resumo["linhas_marcadas_como_substituidas"][0])
+        self.assertNotIn("Rosa", resumo["linhas_marcadas_como_substituidas"][0])
+        self.assertEqual(resumo["resumos_novos"], ["Data nova."])

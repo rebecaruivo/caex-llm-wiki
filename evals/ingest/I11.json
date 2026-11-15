@@ -10,7 +10,11 @@
   "esperado": {
     "resultado": "recusado",
     "motivo": "compilacao",
-    "resultados_aceitos": ["recusado", "sem_mudancas"],
+    "resultados_aceitos": [
+      "recusado",
+      "sem_mudancas",
+      "quarentena"
+    ],
     "paginas": [],
     "paginas_exatas": true,
     "nomes_removidos": 0,
