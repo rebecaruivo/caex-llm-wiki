@@ -8,3 +8,8 @@
 ## 2030-04-12: ingestão de ATA-2030-04-12-0B119D
 
 - Operações aplicadas: 2.
+
+## 2030-04-28: ingestão de ATA-2030-04-28-59D828
+
+- Operações aplicadas: 1.
+- Páginas novas: 1.

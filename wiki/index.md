@@ -8,6 +8,7 @@ Todos os dados são fictícios.
 
 ## Decisões
 - [Semana de Integração](decisoes/semana-de-integracao.md): data atual, histórico e orçamento.
+- [Horário de funcionamento da sala do CA](decisoes/horario-de-funcionamento-da-sala.md)
 
 ## Referência
 - [Glossário](glossario.md)
