@@ -160,7 +160,8 @@ class AplicarOperacoesTest(unittest.TestCase):
         self.assertIn("apagar_linha", str(erro.exception))
         self.assertIn("não suportada", str(erro.exception))
 
-    def test_hash_divergente_nao_aplica(self):
+    def test_posicao_divergente_vai_para_o_fim_da_secao(self):
+        """Em adicionar_linha, linha e hash só sugerem a posição (eval I12)."""
         linhas = self.pagina.read_text(encoding="utf-8").splitlines()
         operacoes = [
             {
@@ -168,13 +169,16 @@ class AplicarOperacoesTest(unittest.TestCase):
                 "pagina": "wiki/processos/exemplo.md",
                 "secao": "O que as fontes dizem",
                 "linha": 16,
-                "hash": "0000",
+                # Hash de outra linha: a sugestão de posição é descartada.
+                "hash": ingerir.hash_linha(linhas[0]),
                 "texto": "Novo fato. [fonte: ATA-2030-03-10]",
             }
         ]
-        with self.assertRaises(ingerir.ErroOperacao):
-            ingerir.aplicar_operacoes(self.raiz, operacoes, {"ATA-2030-03-10"})
-        self.assertEqual(self.pagina.read_text(encoding="utf-8").splitlines(), linhas)
+        ingerir.aplicar_operacoes(self.raiz, operacoes, {"ATA-2030-03-10"})
+        depois = self.pagina.read_text(encoding="utf-8").splitlines()
+        indice = depois.index("- Novo fato. [fonte: ATA-2030-03-10]")
+        self.assertEqual(ingerir._secao_da_linha(depois, indice + 1), "O que as fontes dizem")
+        self.assertEqual(len(depois), len(linhas) + 1)
 
     def test_hash_correto_aplica_apos_a_linha_referenciada(self):
         linhas = self.pagina.read_text(encoding="utf-8").splitlines()

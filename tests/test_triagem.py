@@ -182,10 +182,10 @@ class SubstituirNomesTest(unittest.TestCase):
             "[nome removido] vestia camiseta rosa.",
         )
 
-    def test_substituicao_e_sensivel_a_maiusculas(self):
+    def test_substituicao_pega_como_detectado_e_maiusculas(self):
         self.assertEqual(
             ingerir.substituir_nomes("rosa, Rosa e ROSA", ["Rosa"]),
-            "rosa, [nome removido] e ROSA",
+            "rosa, [nome removido] e [nome removido]",
         )
 
     def test_nome_mais_longo_tem_prioridade(self):

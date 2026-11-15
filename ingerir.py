@@ -67,7 +67,24 @@ TIPOS_OPERACAO = (
 
 
 class ErroApi(Exception):
-    """Falha ao falar com o Gemini."""
+    """Falha ao falar com o Gemini.
+
+    Num 429, `cota` guarda o identificador da cota estourada que o Google manda
+    no corpo (ex.: `GenerateRequestsPerDayPerProjectPerModel-FreeTier`) e
+    `espera` a espera sugerida em segundos. `diaria` diz se a cota é por dia:
+    nesse caso não adianta repetir até a cota renovar.
+    """
+
+    def __init__(self, mensagem, *, status=None, cota=None, espera=None, modelo=None):
+        super().__init__(mensagem)
+        self.status = status
+        self.cota = cota
+        self.espera = espera
+        self.modelo = modelo
+
+    @property
+    def diaria(self):
+        return bool(self.cota) and "perday" in self.cota.lower()
 
 
 class ErroFonte(Exception):
@@ -113,6 +130,16 @@ class ErroPublicacao(ErroOperacao):
 
 
 # Contrato JSON pedido ao Gemini em modo estruturado.
+def _formato_operacao(tipo, campos, obrigatorios):
+    """Formato JSON de um tipo de operação, na ordem em que deve ser gerado."""
+    return {
+        "type": "OBJECT",
+        "properties": {"tipo": {"type": "STRING", "enum": [tipo]}, **campos},
+        "required": ["tipo", *obrigatorios],
+        "propertyOrdering": ["tipo", *campos],
+    }
+
+
 ESQUEMA_RESPOSTA = {
     "type": "OBJECT",
     "properties": {
@@ -155,42 +182,69 @@ ESQUEMA_RESPOSTA = {
         },
         "operacoes": {
             "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                # Em modo estruturado o Gemini só devolve campos declarados aqui.
-                # Todo campo lido por `aplicar_operacoes` precisa estar listado;
-                # `tests/test_esquema_compilador.py` confere isso.
-                "properties": {
-                    "tipo": {"type": "STRING", "enum": list(TIPOS_OPERACAO)},
-                    "pagina": {"type": "STRING"},
-                    "secao": {"type": "STRING"},
-                    "texto": {"type": "STRING"},
-                    "linha": {"type": "INTEGER"},
-                    "hash": {"type": "STRING"},
-                    # marcar_substituida
-                    "nova_fonte": {"type": "STRING"},
-                    "data": {"type": "STRING"},
-                    # criar_pagina
-                    "caminho": {"type": "STRING"},
-                    "tipo_pagina": {"type": "STRING", "enum": ["processo", "decisao"]},
-                    "titulo": {"type": "STRING"},
-                    "secoes": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "secao": {"type": "STRING"},
-                                "linhas": {"type": "ARRAY", "items": {"type": "STRING"}},
+            # Um formato por tipo de operação, cada um com seus campos
+            # obrigatórios. Com um formato único e tudo opcional, o modelo
+            # misturava campos de tipos diferentes e chegava a entrar em loop.
+            # Em modo estruturado o Gemini só devolve campos declarados aqui;
+            # `tests/test_esquema_compilador.py` confere que todo campo lido
+            # por `aplicar_operacoes` está em algum formato.
+            "items": {"anyOf": [
+                _formato_operacao(
+                    "adicionar_linha",
+                    {
+                        "pagina": {"type": "STRING"},
+                        "secao": {"type": "STRING"},
+                        "texto": {"type": "STRING"},
+                        "linha": {"type": "INTEGER"},
+                        "hash": {"type": "STRING"},
+                    },
+                    ["pagina", "secao", "texto"],
+                ),
+                _formato_operacao(
+                    "marcar_substituida",
+                    {
+                        "pagina": {"type": "STRING"},
+                        "linha": {"type": "INTEGER"},
+                        "hash": {"type": "STRING"},
+                        "nova_fonte": {"type": "STRING"},
+                        "data": {"type": "STRING"},
+                    },
+                    ["pagina", "linha", "hash"],
+                ),
+                _formato_operacao(
+                    "atualizar_resumo",
+                    {"pagina": {"type": "STRING"}, "texto": {"type": "STRING"}},
+                    ["pagina", "texto"],
+                ),
+                _formato_operacao(
+                    "criar_pagina",
+                    {
+                        "caminho": {"type": "STRING"},
+                        "tipo_pagina": {"type": "STRING", "enum": ["processo", "decisao"]},
+                        "titulo": {"type": "STRING"},
+                        "secoes": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "secao": {"type": "STRING"},
+                                    "linhas": {"type": "ARRAY", "items": {"type": "STRING"}},
+                                },
+                                "required": ["secao", "linhas"],
+                                "propertyOrdering": ["secao", "linhas"],
                             },
-                            "required": ["secao", "linhas"],
                         },
                     },
-                },
-                "required": ["tipo"],
-            },
+                    ["caminho", "tipo_pagina", "titulo", "secoes"],
+                ),
+            ]},
         },
     },
     "required": ["operacoes"],
+    # O modelo pensa na ordem em que gera: fatos, mudanças e contradições
+    # vêm antes das operações, para a decisão "é contradição?" acontecer
+    # antes de ele escrever um adicionar_linha (eval I06).
+    "propertyOrdering": ["fatos_novos", "mudancas", "contradicoes", "lacunas", "operacoes"],
 }
 
 # Contrato JSON do classificador de triagem (injecao, sinais, nomes).
@@ -438,16 +492,27 @@ def _nomes_ordenados(nomes):
     return sorted(limpos, key=len, reverse=True)
 
 
+def padrao_nome(nome):
+    """Regra única de nome em todo o ingest: palavra inteira, como detectado
+    (`Rosa`) ou todo em maiúsculas (`ROSA`). Em minúsculas (`camiseta rosa`)
+    é palavra comum. Troca, checagem final e eval usam esta mesma regra; antes
+    a troca diferenciava maiúsculas e a checagem não, e toda ata com um nome
+    que também é palavra comum era recusada (eval I04).
+    """
+    variantes = sorted({nome, nome.upper()}, key=len, reverse=True)
+    corpo = "|".join(re.escape(variante) for variante in variantes)
+    return re.compile(r"(?<!\w)(?:" + corpo + r")(?!\w)")
+
+
 def remover_nomes(texto, nomes=None):
-    """Troca nomes por `[nome removido]`, sem caixa e por palavra inteira.
+    """Troca nomes por `[nome removido]`, pela regra de `padrao_nome`.
 
     É o único ponto de substituição de nomes em texto gerado. Os chamadores
     decidem se querem colapsar espaços antes ou depois.
     """
     texto = str(texto or "")
     for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        texto = re.sub(padrao, MARCADOR_NOME, texto, flags=re.IGNORECASE)
+        texto = padrao_nome(nome).sub(MARCADOR_NOME, texto)
     return texto
 
 
@@ -455,8 +520,7 @@ def _substituir_com_contagem(texto, nomes):
     """Substitui por palavra inteira, como `contem_nome`: `Ana` não toca `Anabela`."""
     total = 0
     for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        texto, quantidade = re.subn(padrao, MARCADOR_NOME, texto)
+        texto, quantidade = padrao_nome(nome).subn(MARCADOR_NOME, texto)
         total += quantidade
     return texto, total
 
@@ -593,12 +657,8 @@ def _validar_citacoes(texto, fontes_validas, exigir=True):
 
 
 def contem_nome(texto, nomes):
-    """Indica se `texto` contém algum nome, sem caixa e por palavra inteira."""
-    for nome in _nomes_ordenados(nomes):
-        padrao = r"(?<!\w)" + re.escape(nome) + r"(?!\w)"
-        if re.search(padrao, str(texto), re.IGNORECASE):
-            return True
-    return False
+    """Indica se `texto` contém algum nome, pela regra de `padrao_nome`."""
+    return any(padrao_nome(nome).search(str(texto)) for nome in _nomes_ordenados(nomes))
 
 
 def _strings_de(valor):
@@ -1028,6 +1088,115 @@ def _validar_proposta(dados):
     return dados
 
 
+def _posicao_sugerida(linhas, linha, hash_referencia):
+    """Linha depois da qual inserir, ou None para ir ao fim da seção.
+
+    Usa a sugestão só quando ela é coerente: número válido e hash da própria
+    linha (ou hash inventado, que não carrega informação, como em
+    `_conferir_hash`). Qualquer outra coisa descarta a sugestão.
+    """
+    if linha is None:
+        return None
+    if isinstance(linha, str):
+        texto = linha.strip().lstrip("Ll")
+        linha = int(texto) if texto.isdigit() else None
+    if isinstance(linha, bool) or not isinstance(linha, int):
+        return None
+    if not (1 <= linha <= len(linhas)):
+        return None
+    if not isinstance(hash_referencia, str) or not hash_referencia:
+        return None
+    try:
+        _conferir_hash(linhas, linha, hash_referencia)
+    except ErroOperacao:
+        return None
+    return linha
+
+
+def _conferir_hash(linhas, linha, hash_referencia):
+    """Confere se `linha` e `hash` apontam para o mesmo lugar.
+
+    Dentro de uma compilação a wiki não muda, então o hash só protege contra
+    o modelo apontar a linha errada. Se o hash é de outra linha, número e hash
+    discordam e a operação é recusada. Se o hash não existe em linha nenhuma,
+    o modelo o inventou: ele não carrega informação, e vale o número.
+    """
+    if hash_linha(linhas[linha - 1]) == hash_referencia:
+        return
+    outras = [
+        numero
+        for numero, texto in enumerate(linhas, 1)
+        if hash_linha(texto) == hash_referencia
+    ]
+    if outras:
+        raise ErroOperacao(
+            f"linha {linha} e hash {hash_referencia} apontam para linhas diferentes "
+            f"(o hash é da linha {outras[0]}; o da linha {linha} é "
+            f"{hash_linha(linhas[linha - 1])})"
+        )
+
+
+def _resolver_linha(linhas, linha, hash_referencia):
+    """Número da linha referenciada, tolerante ao formato que o modelo vê.
+
+    O contexto mostra `L12 [hash=2a71]`, então o modelo às vezes manda `"L12"`
+    ou só o hash. Aceita `12`, `"12"` e `"L12"`; sem número, procura a linha
+    pelo hash e só aceita se ele for único na página. O hash continua sendo
+    conferido depois por quem chama.
+    """
+    if isinstance(linha, str):
+        texto = linha.strip()
+        if texto[:1] in ("L", "l"):
+            texto = texto[1:]
+        linha = int(texto) if texto.isdigit() else linha
+    if isinstance(linha, bool):
+        raise ErroOperacao("'linha' precisa ser um inteiro")
+    if isinstance(linha, int):
+        return linha
+    if linha is None and isinstance(hash_referencia, str) and hash_referencia:
+        achadas = [
+            numero
+            for numero, texto in enumerate(linhas, 1)
+            if hash_linha(texto) == hash_referencia
+        ]
+        if len(achadas) == 1:
+            return achadas[0]
+        if len(achadas) > 1:
+            raise ErroOperacao(
+                f"hash {hash_referencia} aparece em mais de uma linha; informe 'linha'"
+            )
+        raise ErroOperacao(f"nenhuma linha com hash {hash_referencia}; copie 'linha' e 'hash' do texto atual")
+    raise ErroOperacao("'linha' precisa ser um inteiro")
+
+
+def exigir_linha_nova_nas_substituicoes(operacoes, source_id):
+    """Toda página com `marcar_substituida` recebe também a linha que substitui.
+
+    Sem isto o modelo marcava uma linha como "substituída por [fonte: X]" e
+    não escrevia o que X trouxe: a data nova ficava só no resumo, sem
+    citação (eval I14). A linha nova precisa citar a fonte em compilação.
+    """
+    if not source_id:
+        return
+    citacao = f"[fonte: {source_id}]"
+    com_linha_nova = {
+        Path(str(operacao.get("pagina"))).as_posix()
+        for operacao in operacoes
+        if isinstance(operacao, dict)
+        and operacao.get("tipo") == "adicionar_linha"
+        and citacao in str(operacao.get("texto", ""))
+    }
+    for operacao in operacoes:
+        if isinstance(operacao, dict) and operacao.get("tipo") == "marcar_substituida":
+            pagina = Path(str(operacao.get("pagina"))).as_posix()
+            if pagina not in com_linha_nova:
+                raise ErroOperacao(
+                    f"marcar_substituida em {pagina} sem a linha nova: adicione com "
+                    f"adicionar_linha, em 'O que as fontes dizem' da mesma página, "
+                    f"o que a fonte nova diz, citando {citacao}"
+                )
+
+
 def aplicar_operacoes(
     raiz,
     operacoes,
@@ -1057,6 +1226,12 @@ def aplicar_operacoes(
     tipo_origem = (fonte or {}).get("tipo")
     if tipo_origem is None and source_id in mapa:
         tipo_origem = mapa[source_id].get("tipo")
+    # A regra "relato não cria página" é sobre a autoridade, não sobre o tipo.
+    # O tipo `outro` tem autoridade `relato`; comparar o tipo com "relato"
+    # nunca dava verdadeiro, e um relato conseguia criar página (eval I11).
+    autoridade_origem = AUTORIDADE_POR_TIPO.get(tipo_origem, tipo_origem)
+    if not (fonte or {}).get("tipo") and source_id in mapa:
+        autoridade_origem = mapa[source_id].get("autoridade") or autoridade_origem
     data_documento = data_documento or (fonte or {}).get("data")
     if data_documento is None and source_id and source_id in mapa:
         data_documento = mapa[source_id].get("data")
@@ -1121,7 +1296,7 @@ def aplicar_operacoes(
             continue
 
         if tipo == "criar_pagina":
-            if tipo_origem == "relato":
+            if autoridade_origem == "relato":
                 raise ErroOperacao("fonte relato não pode criar página")
             caminho_relativo, alvo = _caminho_novo(raiz, operacao.get("caminho"))
             pasta = Path(caminho_relativo).parts[1]
@@ -1210,23 +1385,17 @@ def aplicar_operacoes(
                 secao in SECOES_COM_CITACAO
                 or relativo_pagina == "wiki/glossario.md"
             )
+            # Em adicionar_linha, `linha` e `hash` só sugerem a POSIÇÃO ("logo
+            # depois desta linha"); nada existente é alterado. Se a sugestão
+            # não bater, a linha vai para o fim da seção pedida, em vez de a
+            # proposta inteira ser recusada (eval I12: o modelo repetiu um hash
+            # errado nas 3 tentativas). Em marcar_substituida a linha é o alvo
+            # da mudança, e lá a divergência continua sendo recusada.
+            linha = _posicao_sugerida(linhas, linha, hash_referencia)
             if linha is not None:
-                if isinstance(linha, bool) or not isinstance(linha, int):
-                    raise ErroOperacao("'linha' precisa ser um inteiro")
-                if not (1 <= linha <= len(linhas)):
-                    raise ErroOperacao(f"linha fora da página: {linha}")
-                if not isinstance(hash_referencia, str) or not hash_referencia:
-                    raise ErroOperacao("operação com 'linha' precisa informar 'hash'")
-                if hash_linha(linhas[linha - 1]) != hash_referencia:
-                    raise ErroOperacao(
-                        f"linha {linha} desatualizada: hash divergente "
-                        f"(esperado {hash_linha(linhas[linha - 1])})"
-                    )
                 exigir_citacao = exigir_citacao or (
                     _secao_da_linha(linhas, linha) in SECOES_COM_CITACAO
                 )
-            elif hash_referencia:
-                raise ErroOperacao("'hash' só é aceito junto de 'linha'")
             _validar_citacoes(texto, fontes_validas, exigir=exigir_citacao)
             if linha is not None:
                 linhas.insert(linha, nova_linha)
@@ -1244,9 +1413,15 @@ def aplicar_operacoes(
             continue
 
         if tipo == "marcar_substituida":
-            nova_fonte = operacao.get("nova_fonte")
+            # Quem substitui é sempre a fonte em compilação, como `data`, que
+            # cai para a data do documento. O modelo pode omitir o campo.
+            nova_fonte = operacao.get("nova_fonte") or source_id
             if not isinstance(nova_fonte, str) or not nova_fonte:
                 raise ErroOperacao("marcar_substituida sem 'nova_fonte'")
+            if source_id and nova_fonte != source_id:
+                raise ErroOperacao(
+                    f"'nova_fonte' precisa ser a fonte nova ({source_id}), não {nova_fonte}"
+                )
             nova_info = info_fonte(nova_fonte)
             if nova_info is None:
                 raise ErroOperacao(f"fonte nova desconhecida: {nova_fonte}")
@@ -1275,19 +1450,13 @@ def aplicar_operacoes(
                     f"fonte {nova_fonte} não pode sustentar afirmação"
                 )
 
-            linha = operacao.get("linha")
             hash_referencia = operacao.get("hash")
-            if isinstance(linha, bool) or not isinstance(linha, int):
-                raise ErroOperacao("'linha' precisa ser um inteiro")
+            linha = _resolver_linha(linhas, operacao.get("linha"), hash_referencia)
             if not (1 <= linha <= len(linhas)):
                 raise ErroOperacao(f"linha fora da página: {linha}")
             if not isinstance(hash_referencia, str) or not hash_referencia:
                 raise ErroOperacao("marcar_substituida precisa informar 'hash'")
-            if hash_linha(linhas[linha - 1]) != hash_referencia:
-                raise ErroOperacao(
-                    f"linha {linha} desatualizada: hash divergente "
-                    f"(esperado {hash_linha(linhas[linha - 1])})"
-                )
+            _conferir_hash(linhas, linha, hash_referencia)
             linha_atual = linhas[linha - 1]
             citadas = CITACAO.findall(linha_atual)
             if not citadas:
@@ -1330,6 +1499,8 @@ def aplicar_operacoes(
                 {
                     "pagina": caminho.relative_to(raiz).as_posix(),
                     "texto": marca.strip(),
+                    "linha": linha,
+                    "conteudo": linhas[linha - 1],
                 }
             )
             continue
@@ -1352,6 +1523,7 @@ def aplicar_operacoes(
                 {
                     "pagina": caminho_relativo,
                     "texto": "resumo atualizado",
+                    "conteudo": "\n".join(novas_linhas),
                 }
             )
             continue
@@ -1458,9 +1630,12 @@ def compilar(
     validos = fontes_validas_para_compilar(raiz, source_id)
 
     erros_anteriores = []
+    historico_erros = []
     motivo = "compilacao"
 
     for tentativa in range(1, max_tentativas + 1):
+        if erros_anteriores:
+            historico_erros.append(list(erros_anteriores))
         prompt = montar_prompt_compilador(
             fonte,
             source_id,
@@ -1479,6 +1654,7 @@ def compilar(
         try:
             dados = _validar_proposta(_carregar_resposta(bruto))
             _validar_textos_gerados(dados, nomes)
+            exigir_linha_nova_nas_substituicoes(dados["operacoes"], source_id)
             snapshot = _snapshot_wiki(raiz)
             try:
                 resultado = aplicar_operacoes(
@@ -1528,6 +1704,7 @@ def compilar(
             "pendencias": resultado["pendencias"],
             "novas_paginas": resultado["novas_paginas"],
             "tentativas": tentativa,
+            "erros_tentativas_anteriores": historico_erros,
         }
 
     raise ErroCompilacao(motivo, erros_anteriores, max_tentativas)
@@ -2251,6 +2428,59 @@ def _transporte_urllib(url, cabecalhos, corpo):
         return json.load(resposta)
 
 
+# Acima disto, esperar não compensa: o worker e os evals preferem falhar
+# com uma mensagem clara a ficar parados minutos esperando a cota.
+ESPERA_MAXIMA_SEGUNDOS = 90
+
+
+def _detalhes_limite(erro):
+    """Lê de um erro HTTP do Gemini a cota estourada e a espera sugerida.
+
+    O Google quase nunca manda o cabeçalho `Retry-After`. A espera vem no
+    corpo, em `RetryInfo.retryDelay` (ex.: "27s"), e a cota em
+    `QuotaFailure.violations[].quotaId`. O corpo do erro não traz o prompt,
+    então a cota pode ir para logs públicos.
+    """
+    cota, espera = None, None
+    try:
+        corpo = json.loads((erro.read() or b"{}").decode("utf-8", "replace"))
+    except (ValueError, OSError, AttributeError, TypeError):
+        corpo = {}
+    detalhes = (corpo.get("error") or {}).get("details") if isinstance(corpo, dict) else None
+    for detalhe in detalhes if isinstance(detalhes, list) else []:
+        if not isinstance(detalhe, dict):
+            continue
+        tipo = str(detalhe.get("@type", ""))
+        if tipo.endswith("QuotaFailure"):
+            for violacao in detalhe.get("violations") or []:
+                identificador = str((violacao or {}).get("quotaId") or "")
+                # Se houver mais de uma, a diária é a que manda.
+                if identificador and (cota is None or "perday" in identificador.lower()):
+                    cota = identificador
+        elif tipo.endswith("RetryInfo"):
+            achado = re.fullmatch(r"(\d+(?:\.\d+)?)s", str(detalhe.get("retryDelay", "")))
+            if achado:
+                espera = float(achado.group(1))
+    cabecalho = erro.headers.get("Retry-After") if erro.headers is not None else None
+    if espera is None and cabecalho and str(cabecalho).strip().isdigit():
+        espera = float(cabecalho)
+    return cota, espera
+
+
+def _mensagem_http(codigo, modelo, cota, diaria, tentativa):
+    mensagem = f"HTTP {codigo} ao chamar o Gemini ({modelo})"
+    if codigo != 429:
+        return mensagem
+    if diaria:
+        return (
+            f"{mensagem}: cota diária esgotada [{cota}]. Ela renova à meia-noite "
+            "do horário do Pacífico (por volta das 5h em Brasília)"
+        )
+    if cota:
+        return f"{mensagem}: limite [{cota}] continuou estourado após {tentativa} tentativa(s)"
+    return f"{mensagem}: limite de uso estourado após {tentativa} tentativa(s)"
+
+
 def chamar_gemini_json(
     prompt,
     modelo=None,
@@ -2258,8 +2488,15 @@ def chamar_gemini_json(
     response_schema=None,
     transporte=None,
     tentativas=MAX_TENTATIVAS,
+    dormir=None,
 ):
-    """Chama o Gemini exigindo `responseMimeType=application/json` e schema."""
+    """Chama o Gemini exigindo `responseMimeType=application/json` e schema.
+
+    Erros temporários (429, 5xx, conexão) são repetidos. Num 429 a espera vem
+    do próprio Google (`RetryInfo.retryDelay` no corpo); cota diária esgotada
+    ou espera longa demais encerram na hora, porque repetir só gastaria tempo.
+    """
+    dormir = dormir or time.sleep
     modelo = modelo or MODELO_INGEST
     if chave is None:
         chave = os.environ.get("GEMINI_API_KEY_INGEST") or os.environ.get("GEMINI_API_KEY") or ""
@@ -2290,14 +2527,27 @@ def chamar_gemini_json(
         except ErroApi:
             raise
         except urllib.error.HTTPError as erro:
-            if erro.code not in (429, 500, 502, 503, 504) or tentativa == tentativas:
-                raise ErroApi(f"HTTP {erro.code} ao chamar o Gemini") from erro
-            espera = int(erro.headers.get("Retry-After") or 0) or 15 * tentativa
-            time.sleep(espera)
+            cota, sugerida = _detalhes_limite(erro)
+            diaria = bool(cota) and "perday" in cota.lower()
+            espera = sugerida if sugerida is not None else 15 * tentativa
+            if (
+                erro.code not in (429, 500, 502, 503, 504)
+                or tentativa == tentativas
+                or diaria
+                or espera > ESPERA_MAXIMA_SEGUNDOS
+            ):
+                raise ErroApi(
+                    _mensagem_http(erro.code, modelo, cota, diaria, tentativa),
+                    status=erro.code,
+                    cota=cota,
+                    espera=sugerida,
+                    modelo=modelo,
+                ) from erro
+            dormir(espera + 1)
         except (urllib.error.URLError, TimeoutError) as erro:
             if tentativa == tentativas:
                 raise ErroApi(f"falha de conexão com o Gemini: {erro}") from erro
-            time.sleep(10 * tentativa)
+            dormir(10 * tentativa)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as erro:
             raise ErroApi(f"formato inesperado da resposta do Gemini: {erro}") from erro
     raise ErroApi("tentativas esgotadas")

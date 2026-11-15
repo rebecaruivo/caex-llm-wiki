@@ -9,9 +9,13 @@
   },
   "esperado": {
     "resultado": "ok",
-    "paginas": ["wiki/processos/assembleia.md"],
+    "paginas": [
+      "wiki/decisoes/semana-de-integracao.md"
+    ],
     "nomes_removidos": 1,
-    "proibidos": ["Rosa"]
+    "proibidos": [
+      "Rosa"
+    ]
   },
   "criterios": [
     "remove só o span do nome",

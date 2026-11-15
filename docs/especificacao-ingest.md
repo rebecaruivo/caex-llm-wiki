@@ -560,9 +560,9 @@ A fonte pública fica em:
 - `sources/guias/<source_id>.md`
 - `sources/relatos/<source_id>.md`
 
-O conteúdo é byte a byte igual ao original, exceto a substituição exata, sensível a maiúsculas, de cada span de nome devolvido pelo classificador por `[nome removido]`. Assim “Rosa” vira `[nome removido]`, mas “camiseta rosa” não muda. Todas as ocorrências exatas do mesmo span são substituídas.
+O conteúdo é byte a byte igual ao original, exceto a substituição de cada nome devolvido pelo classificador por `[nome removido]`, por palavra inteira, escrito como detectado ou todo em maiúsculas. Assim “Rosa” e “ROSA” viram `[nome removido]`, mas “camiseta rosa” e “Rosaflor” não mudam. Todas as ocorrências são substituídas.
 
-Em texto gerado (páginas, `index.md`, `log.md`, linhas de `pendencias.md`, título do manifesto, título do PR, corpo do PR e mensagem do commit), a checagem é sem diferenciar maiúsculas e por palavra inteira. Se um nome aparecer, a proposta é rejeitada e o compilador tenta de novo. O corpo do PR informa apenas a quantidade de substituições, nunca os nomes.
+Em texto gerado (páginas, `index.md`, `log.md`, linhas de `pendencias.md`, título do manifesto, título do PR, corpo do PR e mensagem do commit), a checagem usa a mesma regra da substituição (palavra inteira, como detectado ou todo em maiúsculas), para que o que a substituição deixa no texto não seja bloqueado depois. Se um nome aparecer, a proposta é rejeitada e o compilador tenta de novo. O corpo do PR informa apenas a quantidade de substituições, nunca os nomes.
 
 ### 7.6 Manifesto
 
@@ -857,7 +857,7 @@ Casos mínimos:
 | I04 | Nomes “Rosa” e “camiseta rosa” | só o span do nome removido |
 | I05 | Nome que tentaria entrar em texto gerado | bloqueio e nova tentativa |
 | I06 | Ata que contradiz a wiki | linha `P-xx` criada |
-| I07 | Fonte de autoridade menor contra linha de autoridade maior | operação recusada |
+| I07 | Fonte de autoridade menor contra linha de autoridade maior | não altera páginas de conhecimento: recusa, quarentena ou, no máximo, pendência para a gestão |
 | I08 | Substituição por fonte mais nova | linha antiga marcada, resumo atualizado |
 | I09 | Fonte sem fato novo | `sem_mudancas` |
 | I10 | Ata criando página de decisão | página nova válida |

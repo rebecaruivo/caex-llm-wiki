@@ -18,7 +18,11 @@ from tests.support import criar_repo, fonte
 from tests.test_guardrails import registrar_fonte
 
 RAIZ = Path(__file__).resolve().parents[1]
-PROPRIEDADES = ingerir.ESQUEMA_RESPOSTA["properties"]["operacoes"]["items"]["properties"]
+FORMATOS = {
+    formato["properties"]["tipo"]["enum"][0]: formato
+    for formato in ingerir.ESQUEMA_RESPOSTA["properties"]["operacoes"]["items"]["anyOf"]
+}
+PROPRIEDADES = {campo for formato in FORMATOS.values() for campo in formato["properties"]}
 
 
 def campos_lidos_pelo_aplicador():
@@ -43,21 +47,30 @@ class EsquemaCompiladorTest(unittest.TestCase):
             f"campos lidos pelo código e ausentes do esquema: {sorted(faltando)}",
         )
 
-    def test_campos_do_exemplo_do_prompt_estao_no_esquema(self):
+    def test_exemplo_do_prompt_respeita_o_formato_de_cada_tipo(self):
         for operacao in operacoes_do_exemplo_no_prompt():
-            faltando = set(operacao) - set(PROPRIEDADES)
-            self.assertEqual(
-                faltando,
-                set(),
-                f"{operacao['tipo']}: o prompt pede campos que o esquema não aceita: {sorted(faltando)}",
-            )
+            formato = FORMATOS[operacao["tipo"]]
+            sobrando = set(operacao) - set(formato["properties"])
+            faltando = set(formato["required"]) - set(operacao)
+            self.assertEqual(sobrando, set(), f"{operacao['tipo']}: campos fora do formato")
+            self.assertEqual(faltando, set(), f"{operacao['tipo']}: campos obrigatórios ausentes")
 
     def test_exemplo_do_prompt_cobre_todos_os_tipos(self):
         tipos = {operacao["tipo"] for operacao in operacoes_do_exemplo_no_prompt()}
         self.assertEqual(tipos, set(ingerir.TIPOS_OPERACAO))
 
-    def test_tipo_da_operacao_e_restrito_aos_tipos_aceitos(self):
-        self.assertEqual(PROPRIEDADES["tipo"]["enum"], list(ingerir.TIPOS_OPERACAO))
+    def test_ha_um_formato_por_tipo_de_operacao(self):
+        self.assertEqual(list(FORMATOS), list(ingerir.TIPOS_OPERACAO))
+
+    def test_substituicao_exige_linha_e_hash(self):
+        self.assertTrue({"linha", "hash"} <= set(FORMATOS["marcar_substituida"]["required"]))
+        self.assertNotIn("titulo", FORMATOS["marcar_substituida"]["properties"])
+
+    def test_ordem_de_geracao_cobre_todos_os_campos(self):
+        for tipo, formato in FORMATOS.items():
+            self.assertEqual(
+                set(formato["propertyOrdering"]), set(formato["properties"]), tipo
+            )
 
 
 class SecoesEmListaTest(unittest.TestCase):

@@ -140,12 +140,84 @@ class SubstituicaoTest(unittest.TestCase):
         )
         self.assertEqual(resultado["substituicoes"], 1)
 
-    def test_hash_divergente_nao_altera(self):
-        antes = self.pagina.read_text(encoding="utf-8")
-        with self.assertRaises(ingerir.ErroOperacao):
+    def test_sem_nova_fonte_usa_a_fonte_em_compilacao(self):
+        operacao = self.operacao_marcar()
+        del operacao["nova_fonte"]
+        del operacao["data"]
+        resultado = ingerir.aplicar_operacoes(
+            self.raiz,
+            [operacao],
+            self.validos,
+            fonte=fonte(),
+            source_id="ATA-2030-04-10",
+            data_documento="2030-04-10",
+        )
+        self.assertEqual(resultado["substituicoes"], 1)
+        self.assertIn(
+            "(substituída por [fonte: ATA-2030-04-10] em 2030-04-10)",
+            self.pagina.read_text(encoding="utf-8"),
+        )
+
+    def test_nova_fonte_diferente_da_fonte_em_compilacao_recusa(self):
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "precisa ser a fonte nova"):
             ingerir.aplicar_operacoes(
                 self.raiz,
-                [self.operacao_marcar(hash="0000")],
+                [self.operacao_marcar(nova_fonte="ATA-2030-03-10")],
+                self.validos,
+                fonte=fonte(),
+                source_id="ATA-2030-04-10",
+                data_documento="2030-04-10",
+            )
+        self.assertNotIn("substituída", self.pagina.read_text(encoding="utf-8"))
+
+    def aplicar_marcar(self, operacao):
+        return ingerir.aplicar_operacoes(
+            self.raiz,
+            [operacao],
+            self.validos,
+            fonte=fonte(),
+            source_id="ATA-2030-04-10",
+            data_documento="2030-04-10",
+        )
+
+    def test_linha_no_formato_do_contexto_e_aceita(self):
+        linha, _ = referencia(self.raiz)
+        for valor in (f"L{linha}", str(linha)):
+            with self.subTest(valor=valor):
+                self.setUp()
+                resultado = self.aplicar_marcar(self.operacao_marcar(linha=valor))
+                self.assertEqual(resultado["substituicoes"], 1)
+
+    def test_sem_linha_acha_pelo_hash_unico(self):
+        operacao = self.operacao_marcar()
+        del operacao["linha"]
+        self.assertEqual(self.aplicar_marcar(operacao)["substituicoes"], 1)
+
+    def test_sem_linha_e_hash_inexistente_recusa(self):
+        operacao = self.operacao_marcar(hash="0000")
+        del operacao["linha"]
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "nenhuma linha com hash"):
+            self.aplicar_marcar(operacao)
+
+    def test_substituicao_continua_recusando_hash_de_outra_linha(self):
+        """A tolerância de posição vale só para adicionar_linha."""
+        antes = self.pagina.read_text(encoding="utf-8")
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "apontam para linhas diferentes"):
+            self.aplicar_marcar(self.operacao_marcar(hash=ingerir.hash_linha(antes.splitlines()[0])))
+        self.assertEqual(self.pagina.read_text(encoding="utf-8"), antes)
+
+    def test_hash_inventado_vale_o_numero_da_linha(self):
+        """O modelo às vezes acerta o número e inventa o hash (visto no eval I08)."""
+        resultado = self.aplicar_marcar(self.operacao_marcar(hash="f444"))
+        self.assertEqual(resultado["substituicoes"], 1)
+
+    def test_hash_de_outra_linha_nao_altera(self):
+        antes = self.pagina.read_text(encoding="utf-8")
+        hash_outra = ingerir.hash_linha(antes.splitlines()[0])
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "apontam para linhas diferentes"):
+            ingerir.aplicar_operacoes(
+                self.raiz,
+                [self.operacao_marcar(hash=hash_outra)],
                 self.validos,
                 fonte=fonte(),
                 source_id="ATA-2030-04-10",
@@ -342,6 +414,19 @@ class PaginaNovaTest(unittest.TestCase):
                 [self.operacao()],
                 self.validos,
                 fonte=fonte(tipo="relato"),
+                source_id="ATA-2030-04-10",
+                data_documento="2030-04-10",
+            )
+        self.assertFalse((self.raiz / "wiki/decisoes/nova-decisao.md").exists())
+
+    def test_pagina_nova_de_fonte_tipo_outro_e_recusada(self):
+        """O formulário só tem ata, guia e outro; `outro` tem autoridade relato (eval I11)."""
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "relato não pode criar página"):
+            ingerir.aplicar_operacoes(
+                self.raiz,
+                [self.operacao()],
+                self.validos,
+                fonte=fonte(tipo="outro"),
                 source_id="ATA-2030-04-10",
                 data_documento="2030-04-10",
             )
@@ -654,11 +739,18 @@ class NomeTest(unittest.TestCase):
                     nomes=["Rosa"],
                 )
 
-    def test_bloqueio_e_sem_maiusculas_e_por_palavra_inteira(self):
+    def test_bloqueio_segue_a_mesma_regra_da_troca(self):
         self.assertTrue(ingerir.contem_nome("Rosa aprovou", ["Rosa"]))
         self.assertTrue(ingerir.contem_nome("ROSA aprovou", ["Rosa"]))
-        self.assertTrue(ingerir.contem_nome("camiseta rosa", ["Rosa"]))
+        self.assertFalse(ingerir.contem_nome("camiseta rosa", ["Rosa"]))
         self.assertFalse(ingerir.contem_nome("Rosaflor", ["Rosa"]))
+
+    def test_troca_e_bloqueio_concordam(self):
+        """O que a troca deixa no texto, a checagem final não pode bloquear (eval I04)."""
+        texto = "A assembleia aprovou camiseta rosa. Rosa organizou. ROSA votou."
+        trocado = ingerir.substituir_nomes(texto, ["Rosa"])
+        self.assertIn("camiseta rosa", trocado)
+        self.assertFalse(ingerir.contem_nome(trocado, ["Rosa"]))
 
 
 def resposta(**mudancas):
@@ -804,3 +896,77 @@ class TentativasTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubstituicaoExigeLinhaNovaTest(unittest.TestCase):
+    """Marcar uma linha como substituída sem escrever a nova deixava a página
+    sem o fato novo (eval I14)."""
+
+    def marcar(self, pagina="wiki/decisoes/x.md"):
+        return {"tipo": "marcar_substituida", "pagina": pagina, "linha": 20, "hash": "abcd"}
+
+    def adicionar(self, pagina="wiki/decisoes/x.md", fonte_id="ATA-2030-04-26"):
+        return {
+            "tipo": "adicionar_linha",
+            "pagina": pagina,
+            "secao": "O que as fontes dizem",
+            "texto": f"A data passou para 30/04/2030. [fonte: {fonte_id}]",
+        }
+
+    def test_substituicao_sem_linha_nova_e_recusada(self):
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "sem a linha nova"):
+            ingerir.exigir_linha_nova_nas_substituicoes([self.marcar()], "ATA-2030-04-26")
+
+    def test_linha_nova_em_outra_pagina_nao_basta(self):
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "sem a linha nova"):
+            ingerir.exigir_linha_nova_nas_substituicoes(
+                [self.marcar(), self.adicionar(pagina="wiki/processos/y.md")], "ATA-2030-04-26"
+            )
+
+    def test_linha_nova_citando_outra_fonte_nao_basta(self):
+        with self.assertRaisesRegex(ingerir.ErroOperacao, "sem a linha nova"):
+            ingerir.exigir_linha_nova_nas_substituicoes(
+                [self.marcar(), self.adicionar(fonte_id="ATA-2030-03-10")], "ATA-2030-04-26"
+            )
+
+    def test_substituicao_com_linha_nova_passa(self):
+        ingerir.exigir_linha_nova_nas_substituicoes(
+            [self.marcar(), self.adicionar()], "ATA-2030-04-26"
+        )
+
+    def test_compilador_recebe_o_erro_e_tenta_de_novo(self):
+        import json as _json
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        raiz = criar_repo(tmp.name)
+        registrar_fonte(raiz)
+        linha, hash_ = referencia(raiz)
+        marcar = {
+            "tipo": "marcar_substituida",
+            "pagina": "wiki/processos/exemplo.md",
+            "linha": linha,
+            "hash": hash_,
+        }
+        nova = {
+            "tipo": "adicionar_linha",
+            "pagina": "wiki/processos/exemplo.md",
+            "secao": "O que as fontes dizem",
+            "texto": "Fato atualizado. [fonte: ATA-2030-04-10]",
+        }
+        respostas = [
+            _json.dumps({"operacoes": [marcar]}),
+            _json.dumps({"operacoes": [marcar, nova]}),
+        ]
+        prompts = []
+
+        def modelo(prompt):
+            prompts.append(prompt)
+            return respostas[len(prompts) - 1]
+
+        resultado = ingerir.compilar(
+            fonte(), raiz, modelo, source_id="ATA-2030-04-10", lint=lambda raiz: []
+        )
+        self.assertEqual(resultado["tentativas"], 2)
+        self.assertIn("sem a linha nova", prompts[1])
+        self.assertEqual(resultado["substituicoes"], 1)
