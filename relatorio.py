@@ -87,6 +87,7 @@ def separar_envios(envios, hoje):
         item = {"titulo": _titulo_publico(envio)}
         if status == "publicado":
             item["pr_url"] = envio.get("pr_url")
+            item["source_id"] = envio.get("source_id")
             grupos["publicados"].append(item)
         elif status == "aguardando_revisao":
             item["pr_url"] = envio.get("pr_url")
@@ -100,6 +101,62 @@ def separar_envios(envios, hoje):
             )
             grupos["nao_concluidos"].append(item)
     return grupos
+
+
+LIMITE_LINHAS_POR_DOCUMENTO = 12
+DIAS_DA_SEMANA = ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+                  "sexta-feira", "sábado", "domingo")
+
+
+def _titulo_da_pagina(linhas, relativo):
+    for linha in linhas:
+        if linha.startswith("# "):
+            return linha[2:].strip()
+    return relativo
+
+
+def mudancas_da_fonte(raiz, source_id):
+    """Linhas da wiki que citam `source_id`, agrupadas por página.
+
+    Toda linha que o ingest grava cita a fonte de onde veio; por isso a
+    citação basta para mostrar o que uma ata mudou depois do merge. Uma
+    linha marcada como substituída POR esta fonte aparece como substituição.
+    """
+    if not raiz or not source_id:
+        return []
+    citacao = f"[fonte: {source_id}]"
+    paginas = []
+    for pagina in sorted((Path(raiz) / "wiki").rglob("*.md")):
+        relativo = pagina.relative_to(raiz).as_posix()
+        if relativo in ("wiki/index.md", "wiki/log.md"):
+            continue
+        linhas = pagina.read_text(encoding="utf-8").splitlines()
+        novas, substituidas = [], []
+        for linha in linhas:
+            if citacao not in linha or linha.startswith(("fontes:", "#")):
+                continue
+            if f"(substituída por {citacao}" in linha:
+                antiga = linha.split("(substituída por")[0]
+                substituidas.append(CITACAO.sub("", antiga).lstrip("-0123456789. ").strip())
+            else:
+                depois = ""
+                if "(substituída por" in linha:
+                    # Esta fonte trouxe a linha; uma fonte posterior a substituiu.
+                    linha = linha.split("(substituída por")[0]
+                    depois = " (já substituída por uma fonte posterior)"
+                texto = CITACAO.sub("", linha).strip().strip("|").strip()
+                texto = re.sub(r"\s*\|\s*", " — ", texto).lstrip("-0123456789. ").strip()
+                texto = texto.replace("**", "").replace("__", "")
+                if texto:
+                    novas.append(texto + depois)
+        if novas or substituidas:
+            paginas.append({
+                "pagina": _titulo_da_pagina(linhas, relativo),
+                "caminho": relativo,
+                "novas": novas[:LIMITE_LINHAS_POR_DOCUMENTO],
+                "substituidas": substituidas[:LIMITE_LINHAS_POR_DOCUMENTO],
+            })
+    return paginas
 
 
 def ler_pendencias(raiz):
@@ -171,13 +228,38 @@ def _link(texto, url):
     return texto
 
 
+def _dia_por_extenso(iso):
+    quando = date.fromisoformat(iso)
+    return f"{DIAS_DA_SEMANA[quando.weekday()].capitalize()}, {_data_br(iso)[:5]}"
+
+
+def _publicado_com_mudancas(item):
+    e = html.escape
+    texto = _link(item["titulo"], item.get("pr_url"))
+    blocos = []
+    for pagina in item.get("mudancas") or []:
+        rotulo = "Pendência registrada" if pagina["caminho"] == "wiki/pendencias.md" else "Novo"
+        linhas = [f"{rotulo}: {e(l)}" for l in pagina["novas"]]
+        linhas += [f"Substituído: <s>{e(l)}</s>" for l in pagina["substituidas"]]
+        blocos.append(f"<li><em>{e(pagina['pagina'])}</em><ul>"
+                      + "".join(f"<li>{l}</li>" for l in linhas) + "</ul></li>")
+    if blocos:
+        texto += "<ul>" + "".join(blocos) + "</ul>"
+    elif item.get("source_id"):
+        texto += "<br><small>As mudanças não foram encontradas na wiki publicada.</small>"
+    return texto
+
+
 def html_fatos(envios, pendencias, faltando, prazos):
     """Seções factuais do e-mail, montadas por código e escapadas."""
     e = html.escape
     partes = [
+        "<h2>Avisos da semana</h2>",
+        _lista([f"<strong>{e(_dia_por_extenso(p['data']))}</strong>: {e(p['texto'])}" for p in prazos],
+               "Nenhuma data ou prazo na wiki para os próximos 7 dias."),
         "<h2>Atas e documentos da semana</h2>",
-        "<h3>Publicados na wiki</h3>",
-        _lista([_link(i["titulo"], i.get("pr_url")) for i in envios["publicados"]],
+        "<h3>Publicados na wiki: o que mudou</h3>",
+        _lista([_publicado_com_mudancas(i) for i in envios["publicados"]],
                "Nenhum documento publicado nesta semana."),
         "<h3>Aguardando revisão da gestão</h3>",
         _lista([
@@ -191,10 +273,7 @@ def html_fatos(envios, pendencias, faltando, prazos):
         "<h3>Não concluídos</h3>",
         _lista([f"{e(i['titulo'])} — {e(i['motivo'])}" for i in envios["nao_concluidos"]],
                "Nenhum envio falhou."),
-        "<h2>Pendências e prazos</h2>",
-        "<h3>Datas desta semana na wiki</h3>",
-        _lista([f"<strong>{e(_data_br(p['data']))}</strong>: {e(p['texto'])}" for p in prazos],
-               "Nenhuma data na wiki para os próximos 7 dias."),
+        "<h2>Pendências</h2>",
         "<h3>Pendências abertas</h3>",
         _lista([
             f"<strong>{e(p['id'])}</strong>: {e(p['problema'])}"
@@ -219,6 +298,8 @@ def montar_relatorio(mensagens, envios, inicio, fim, raiz=None, hoje=None):
     lacunas = _lacunas(mensagens)
     sem_fonte = sum(1 for m in mensagens if not m.get("fontes"))
     grupos = separar_envios(envios, hoje)
+    for item in grupos["publicados"]:
+        item["mudancas"] = mudancas_da_fonte(raiz, item.get("source_id"))
     pendencias, faltando = ler_pendencias(raiz) if raiz else ([], [])
     prazos = prazos_da_semana(raiz, hoje) if raiz else []
 
