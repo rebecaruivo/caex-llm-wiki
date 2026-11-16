@@ -152,3 +152,59 @@ class WikiTest(unittest.TestCase):
         self.assertEqual(para_ia["lacunas"][0]["pergunta"], "Qual é o quórum?")
         self.assertEqual(para_ia["documentos_faltando"], ["Estatuto."])
         self.assertNotIn("Ata", dados["para_ia"])
+
+
+class OQueMudouTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.raiz = Path(self.tmp.name)
+        (self.raiz / "wiki/decisoes").mkdir(parents=True)
+        (self.raiz / "wiki/decisoes/semana.md").write_text(
+            "---\nfontes: [ATA-A, ATA-B]\n---\n\n# Semana de Integração\n\n## O que as fontes dizem\n"
+            "- Data: 22/04/2030. [fonte: ATA-A] (substituída por [fonte: ATA-B] em 2030-04-20)\n"
+            "- A data passou para 25/04/2030. [fonte: ATA-B]\n"
+            "- O **orçamento** é de R$ 500. [fonte: ATA-A]\n",
+            encoding="utf-8",
+        )
+        (self.raiz / "wiki/pendencias.md").write_text(
+            "# Pendências\n\n| ID | Problema | Tratamento | Quem resolve |\n|---|---|---|---|\n"
+            "| P-02 | Datas divergem. [fonte: ATA-B] | Em análise. | Secretaria |\n",
+            encoding="utf-8",
+        )
+        (self.raiz / "wiki/log.md").write_text("- Ingestão de ATA-B [fonte: ATA-B]\n", encoding="utf-8")
+
+    def test_linhas_novas_substituicoes_e_pendencias_da_fonte(self):
+        mudancas = {m["caminho"]: m for m in relatorio.mudancas_da_fonte(self.raiz, "ATA-B")}
+        semana = mudancas["wiki/decisoes/semana.md"]
+        self.assertEqual(semana["pagina"], "Semana de Integração")
+        self.assertEqual(semana["novas"], ["A data passou para 25/04/2030."])
+        self.assertEqual(semana["substituidas"], ["Data: 22/04/2030."])
+        self.assertIn("wiki/pendencias.md", mudancas)
+        self.assertNotIn("wiki/log.md", mudancas)
+
+    def test_frontmatter_nao_conta_e_markdown_e_limpo(self):
+        mudancas = relatorio.mudancas_da_fonte(self.raiz, "ATA-A")
+        self.assertEqual(mudancas[0]["novas"], [
+            "Data: 22/04/2030. (já substituída por uma fonte posterior)",
+            "O orçamento é de R$ 500.",
+        ])
+
+    def test_email_mostra_o_que_mudou_e_avisos_no_topo(self):
+        dados = relatorio.montar_relatorio(
+            [], [{"titulo": "Ata de 20/04", "status": "publicado", "source_id": "ATA-B"}],
+            "INICIO", "2030-04-19T12:00:00+00:00", raiz=self.raiz,
+        )
+        fatos = dados["html_fatos"]
+        self.assertLess(fatos.index("Avisos da semana"), fatos.index("Atas e documentos"))
+        self.assertIn("Novo: A data passou para 25/04/2030.", fatos)
+        self.assertIn("Substituído: <s>Data: 22/04/2030.</s>", fatos)
+        self.assertIn("Pendência registrada: P-02", fatos)
+        self.assertIn("Quinta-feira, 25/04", fatos)
+
+    def test_fonte_sem_linhas_na_wiki_avisa(self):
+        dados = relatorio.montar_relatorio(
+            [], [{"titulo": "Ata X", "status": "publicado", "source_id": "ATA-Z"}],
+            "INICIO", "2030-04-19T12:00:00+00:00", raiz=self.raiz,
+        )
+        self.assertIn("não foram encontradas na wiki", dados["html_fatos"])
