@@ -71,3 +71,84 @@ class MontarRelatorioTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from datetime import date
+import json
+import tempfile
+from pathlib import Path
+
+
+class EnviosTest(unittest.TestCase):
+    HOJE = date(2030, 4, 19)
+
+    def test_agrupa_por_status_com_motivo_legivel(self):
+        grupos = relatorio.separar_envios([
+            {"titulo": "A", "status": "publicado", "pr_url": "https://github.com/x/y/pull/1"},
+            {"titulo": "B", "status": "aguardando_revisao", "atualizado_em": "2030-04-15T10:00:00+00:00"},
+            {"titulo": "C", "status": "sem_mudancas"},
+            {"titulo": "D", "status": "falhou", "motivo": "lint"},
+            {"titulo": "E", "status": "quarentena", "motivo": "injecao"},
+            {"titulo": "F", "status": "na_fila"},
+        ], self.HOJE)
+        self.assertEqual([i["titulo"] for i in grupos["publicados"]], ["A"])
+        self.assertEqual(grupos["aguardando_revisao"][0]["dias_esperando"], 4)
+        self.assertEqual([i["titulo"] for i in grupos["sem_mudancas"]], ["C"])
+        motivos = {i["titulo"]: i["motivo"] for i in grupos["nao_concluidos"]}
+        self.assertEqual(motivos["D"], "a revisão automática recusou as mudanças")
+        self.assertIn("instrução dirigida à IA", motivos["E"])
+        self.assertNotIn("F", str(grupos))
+
+    def test_titulo_perde_os_nomes_detectados(self):
+        grupos = relatorio.separar_envios(
+            [{"titulo": "Ata da reunião com Rosa", "status": "falhou", "nomes_detectados": ["Rosa"]}], self.HOJE
+        )
+        self.assertEqual(grupos["nao_concluidos"][0]["titulo"], "Ata da reunião com [nome removido]")
+
+
+class WikiTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.raiz = Path(self.tmp.name)
+        (self.raiz / "wiki/decisoes").mkdir(parents=True)
+        (self.raiz / "wiki/pendencias.md").write_text(
+            "# Pendências\n\n| ID | Problema | Tratamento | Quem resolve |\n|---|---|---|---|\n"
+            "| P-01 | Datas divergem. [fonte: ATA-1] | Em análise. | Secretaria |\n\n"
+            "## Documentos faltando\n- [ ] Estatuto.\n- [x] Já recebido.\n",
+            encoding="utf-8",
+        )
+        (self.raiz / "wiki/decisoes/x.md").write_text(
+            "# X\n\n## O que as fontes dizem\n"
+            "- Prestação de contas até 22/04/2030. [fonte: ATA-1]\n"
+            "- Evento em 25/05/2030. [fonte: ATA-1]\n"
+            "- Data antiga 21/04/2030. [fonte: ATA-1] (substituída por [fonte: ATA-2] em 2030-04-10)\n"
+            "Texto solto 20/04/2030 fora de lista.\n",
+            encoding="utf-8",
+        )
+
+    def test_pendencias_e_documentos_faltando(self):
+        pendencias, faltando = relatorio.ler_pendencias(self.raiz)
+        self.assertEqual(pendencias, [{"id": "P-01", "problema": "Datas divergem.", "quem_resolve": "Secretaria"}])
+        self.assertEqual(faltando, ["Estatuto."])
+
+    def test_prazos_so_da_semana_e_nao_substituidos(self):
+        prazos = relatorio.prazos_da_semana(self.raiz, date(2030, 4, 19))
+        self.assertEqual([p["data"] for p in prazos], ["2030-04-22"])
+        self.assertEqual(prazos[0]["texto"], "Prestação de contas até 22/04/2030.")
+
+    def test_relatorio_completo_separa_fatos_e_ia(self):
+        dados = relatorio.montar_relatorio(
+            [{"pergunta": "Qual é o quórum?", "fontes": []}],
+            [{"titulo": "Ata <b>X</b>", "status": "publicado", "pr_url": "javascript:alert(1)"}],
+            "INICIO", "2030-04-19T12:00:00+00:00", raiz=self.raiz,
+        )
+        fatos = dados["html_fatos"]
+        self.assertIn("Ata &lt;b&gt;X&lt;/b&gt;", fatos)
+        self.assertNotIn("javascript:", fatos)
+        self.assertIn("22/04/2030", fatos)
+        self.assertIn("P-01", fatos)
+        para_ia = json.loads(dados["para_ia"])
+        self.assertEqual(para_ia["lacunas"][0]["pergunta"], "Qual é o quórum?")
+        self.assertEqual(para_ia["documentos_faltando"], ["Estatuto."])
+        self.assertNotIn("Ata", dados["para_ia"])

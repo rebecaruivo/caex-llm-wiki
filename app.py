@@ -711,7 +711,7 @@ def enviar(request: Request, dados: dict = Body(default={})):
 
 
 @app.get("/api/relatorio/semanal")
-def relatorio_semanal(request: Request, dias: int = 7):
+def relatorio_semanal(request: Request, dias: int = 7, hoje: str | None = None):
     """Uso do oráculo no período, para a automação semanal no Make.
 
     Exige `Authorization: Bearer $RELATORIO_TOKEN`. É um segredo separado do
@@ -730,7 +730,15 @@ def relatorio_semanal(request: Request, dias: int = 7):
     except db.ErroBanco as erro:
         print(f"Falha ao montar o relatório: {erro}", flush=True)
         raise HTTPException(status_code=503, detail="Não foi possível montar o relatório agora.") from erro
-    return relatorio.montar_relatorio(mensagens, envios, inicio.isoformat(), fim.isoformat())
+    # `hoje` só muda a janela dos prazos da wiki (útil para os dados
+    # fictícios, datados em 2030); o período de uso continua o real.
+    try:
+        referencia = date.fromisoformat(hoje) if hoje else fim.date()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Use 'hoje' no formato AAAA-MM-DD.")
+    return relatorio.montar_relatorio(
+        mensagens, envios, inicio.isoformat(), fim.isoformat(), raiz=RAIZ, hoje=referencia
+    )
 
 
 @app.get("/api/ingest/manutencao")

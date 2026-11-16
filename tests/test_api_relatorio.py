@@ -72,5 +72,14 @@ class RelatorioSemanalTest(unittest.TestCase):
             self.assertEqual((fim - inicio).days, esperado)
 
 
+    def test_hoje_invalido_recusa_e_valido_entra_nos_prazos(self):
+        with patch.dict(os.environ, {"RELATORIO_TOKEN": "segredo"}, clear=False):
+            with self.assertRaises(app.HTTPException) as erro:
+                app.relatorio_semanal(FakeRequest("Bearer segredo"), 7, "19/04/2030")
+            self.assertEqual(erro.exception.status_code, 422)
+            dados = app.relatorio_semanal(FakeRequest("Bearer segredo"), 7, "2030-04-19")
+        self.assertIn("html_fatos", dados)
+        self.assertIn("para_ia", dados)
+
 if __name__ == "__main__":
     unittest.main()
