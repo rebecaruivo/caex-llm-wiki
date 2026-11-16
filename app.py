@@ -24,6 +24,7 @@ import github_ingest
 import ingerir
 import notificacoes
 import reconciliacao
+import relatorio
 import tempo
 from fila_ingest import ErroDispatch
 from tools.lint_wiki import revisar
@@ -707,6 +708,29 @@ def config_enviar():
 def enviar(request: Request, dados: dict = Body(default={})):
     """Recebe uma fonte e cria o job em `na_fila`, na ordem da especificação."""
     return _processar_envio(dados, request)
+
+
+@app.get("/api/relatorio/semanal")
+def relatorio_semanal(request: Request, dias: int = 7):
+    """Uso do oráculo no período, para a automação semanal no Make.
+
+    Exige `Authorization: Bearer $RELATORIO_TOKEN`. É um segredo separado do
+    `CRON_SECRET`: quem lê o relatório não pode disparar a manutenção.
+    """
+    segredo = os.environ.get("RELATORIO_TOKEN", "")
+    enviado = request.headers.get("authorization") or ""
+    if not segredo or not hmac.compare_digest(enviado, f"Bearer {segredo}"):
+        raise HTTPException(status_code=401, detail=MSG_NAO_AUTORIZADO)
+    exigir_banco()
+    dias = min(max(dias, 1), 31)
+    fim = datetime.now(timezone.utc).replace(microsecond=0)
+    inicio = fim - timedelta(days=dias)
+    try:
+        mensagens, envios = db.dados_do_periodo(inicio.isoformat())
+    except db.ErroBanco as erro:
+        print(f"Falha ao montar o relatório: {erro}", flush=True)
+        raise HTTPException(status_code=503, detail="Não foi possível montar o relatório agora.") from erro
+    return relatorio.montar_relatorio(mensagens, envios, inicio.isoformat(), fim.isoformat())
 
 
 @app.get("/api/ingest/manutencao")

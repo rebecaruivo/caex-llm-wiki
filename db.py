@@ -286,6 +286,22 @@ def apagar_cache(chave):
     _pedir("DELETE", "respostas_cache", {"chave": f"eq.{_chave_valida(chave)}"})
 
 
+def dados_do_periodo(inicio_iso):
+    """Mensagens e envios criados a partir de `inicio_iso`, para o relatório."""
+    mensagens = _pedir("GET", "mensagens", {
+        "select": "pergunta,pergunta_interpretada,fontes,citacoes_invalidas,do_cache,criado_em",
+        "criado_em": f"gte.{inicio_iso}",
+        "order": "criado_em.asc",
+        "limit": "1000",
+    })
+    envios = _pedir("GET", "ingest_jobs", {
+        "select": "status",
+        "criado_em": f"gte.{inicio_iso}",
+        "limit": "1000",
+    })
+    return mensagens or [], envios or []
+
+
 def metricas():
     """Quantas perguntas foram feitas e quantas vieram do cache."""
     total = _pedir("GET", "mensagens", {"select": "id"}, contar=True)

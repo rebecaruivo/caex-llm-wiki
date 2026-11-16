@@ -90,6 +90,7 @@ Ferramentas: Claude (planejamento, revisão e diagnóstico dos evals), OpenCode 
 | `/api/enviar` | POST | Recebe uma ata e a coloca na fila |
 | `/api/ingest/{id}` | GET | Andamento público de um envio |
 | `/api/ingest/manutencao` | GET | Manutenção diária (cron); exige `CRON_SECRET` |
+| `/api/relatorio/semanal` | GET | Perguntas, lacunas e envios da semana, para a automação no Make; exige `RELATORIO_TOKEN` |
 | `/api/saude` | GET | Confirma que a API está no ar |
 
 ```bash
