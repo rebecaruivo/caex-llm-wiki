@@ -294,12 +294,23 @@ def dados_do_periodo(inicio_iso):
         "order": "criado_em.asc",
         "limit": "1000",
     })
-    envios = _pedir("GET", "ingest_jobs", {
-        "select": "status",
-        "criado_em": f"gte.{inicio_iso}",
+    # Envios que mudaram de estado no período, mais os PRs ainda esperando
+    # revisão, que entram no relatório mesmo se forem mais antigos.
+    campos = "source_id,titulo,status,motivo,pr_url,nomes_detectados,atualizado_em"
+    do_periodo = _pedir("GET", "ingest_jobs", {
+        "select": campos,
+        "atualizado_em": f"gte.{inicio_iso}",
+        "order": "atualizado_em.asc",
         "limit": "1000",
-    })
-    return mensagens or [], envios or []
+    }) or []
+    esperando = _pedir("GET", "ingest_jobs", {
+        "select": campos,
+        "status": "eq.aguardando_revisao",
+        "limit": "100",
+    }) or []
+    vistos = {envio.get("source_id") for envio in do_periodo}
+    envios = do_periodo + [e for e in esperando if e.get("source_id") not in vistos]
+    return mensagens or [], envios
 
 
 def metricas():
