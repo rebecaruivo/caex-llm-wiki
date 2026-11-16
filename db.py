@@ -224,7 +224,7 @@ def abrir_chat(chat_id):
     """Devolve um chat com todas as mensagens, em ordem."""
     linhas = _pedir("GET", "chats", {
         "id": f"eq.{_id(chat_id)}",
-        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,pergunta_interpretada,resposta,fontes,citacoes_invalidas,do_cache,criado_em)",
+        "select": "id,titulo,criado_em,atualizado_em,mensagens(id,pergunta,pergunta_interpretada,resposta,fontes,citacoes_invalidas,do_cache,avaliacao,criado_em)",
         "mensagens.order": "criado_em.asc",
     })
     if not linhas:
@@ -247,6 +247,31 @@ def salvar_mensagem(chat_id, pergunta, resultado, pergunta_interpretada=None, do
         "citacoes_invalidas": resultado["citacoes_invalidas"],
         "do_cache": do_cache,
     }, devolver=True)[0]
+
+
+class MensagemNaoEncontrada(Exception):
+    """A mensagem não existe (ou o chat dela foi apagado)."""
+
+
+AVALIACOES = ("positiva", "erro", "lacuna")
+
+
+def avaliar_mensagem(mensagem_id, avaliacao, agora_iso):
+    """Grava a avaliação de uma resposta. A última avaliação vale."""
+    if avaliacao not in AVALIACOES:
+        raise ValueError("Avaliação inválida.")
+    if isinstance(mensagem_id, bool) or not isinstance(mensagem_id, int) or mensagem_id < 1:
+        raise ValueError("Mensagem inválida.")
+    linhas = _pedir(
+        "PATCH",
+        "mensagens",
+        {"id": f"eq.{mensagem_id}", "select": "id,pergunta,pergunta_interpretada,avaliacao"},
+        corpo={"avaliacao": avaliacao, "avaliado_em": agora_iso},
+        devolver=True,
+    )
+    if not linhas:
+        raise MensagemNaoEncontrada("Mensagem não encontrada.")
+    return linhas[0]
 
 
 def apagar_chat(chat_id):
@@ -289,7 +314,7 @@ def apagar_cache(chave):
 def dados_do_periodo(inicio_iso):
     """Mensagens e envios criados a partir de `inicio_iso`, para o relatório."""
     mensagens = _pedir("GET", "mensagens", {
-        "select": "pergunta,pergunta_interpretada,fontes,citacoes_invalidas,do_cache,criado_em",
+        "select": "pergunta,pergunta_interpretada,fontes,citacoes_invalidas,do_cache,avaliacao,criado_em",
         "criado_em": f"gte.{inicio_iso}",
         "order": "criado_em.asc",
         "limit": "1000",

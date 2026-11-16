@@ -75,6 +75,7 @@ class Resposta(BaseModel):
     fontes: list[str]
     citacoes_invalidas: list[str]
     chat_id: str | None = None
+    mensagem_id: int | None = None
     salvo: bool = False
     pergunta_interpretada: str | None = None
     do_cache: bool = False
@@ -229,7 +230,8 @@ def perguntar(dados: Annotated[Pergunta, Body(openapi_examples=EXEMPLOS_PERGUNTA
         try:
             if not chat_id:
                 chat_id = db.criar_chat(pergunta)["id"]
-            db.salvar_mensagem(chat_id, pergunta, resultado, interpretada if interpretada != pergunta else None, bool(guardada))
+            salva = db.salvar_mensagem(chat_id, pergunta, resultado, interpretada if interpretada != pergunta else None, bool(guardada))
+            resultado["mensagem_id"] = (salva or {}).get("id")
             resultado["salvo"] = True
         except db.ErroBanco as erro:
             print(f"Falha ao salvar no histórico: {erro}", flush=True)
@@ -274,6 +276,41 @@ def apagar_chat(chat_id: UUID):
         print(f"Falha ao apagar chat: {erro}", flush=True)
         raise HTTPException(status_code=503, detail="Não foi possível apagar o chat agora.") from erro
     return Response(status_code=204)
+
+
+class Avaliacao(BaseModel):
+    tipo: Literal["positiva", "erro", "lacuna"]
+
+
+@app.post("/api/mensagens/{mensagem_id}/avaliacao")
+def avaliar(mensagem_id: int, dados: Avaliacao):
+    """Guarda a avaliação de uma resposta: útil, erro ou lacuna.
+
+    Fica no próprio histórico, sem webhook. A última avaliação vale, como no
+    histórico compartilhado: qualquer pessoa do CA pode avaliar. Uma resposta
+    marcada com erro sai do cache, para não ser reaproveitada.
+    """
+    exigir_banco()
+    try:
+        mensagem = db.avaliar_mensagem(
+            mensagem_id, dados.tipo, datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    except db.MensagemNaoEncontrada as erro:
+        raise HTTPException(status_code=404, detail="Esta resposta não existe mais.") from erro
+    except db.ErroBanco as erro:
+        print(f"Falha ao avaliar: {erro}", flush=True)
+        raise HTTPException(status_code=503, detail="Não foi possível registrar a avaliação agora.") from erro
+    if dados.tipo == "erro":
+        modelo = os.environ.get("GEMINI_MODEL", MODELO_PADRAO)
+        versao = versao_contexto(carregar_prompt(), montar_wiki())
+        pergunta = mensagem.get("pergunta_interpretada") or mensagem.get("pergunta") or ""
+        try:
+            db.apagar_cache(chave_cache(pergunta, versao, modelo))
+        except db.ErroBanco as erro:
+            print(f"Falha ao tirar do cache: {erro}", flush=True)
+    return {"mensagem_id": mensagem_id, "avaliacao": dados.tipo}
 
 
 @app.post("/api/registros", status_code=201)
