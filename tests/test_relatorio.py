@@ -208,3 +208,19 @@ class OQueMudouTest(unittest.TestCase):
             "INICIO", "2030-04-19T12:00:00+00:00", raiz=self.raiz,
         )
         self.assertIn("não foram encontradas na wiki", dados["html_fatos"])
+
+
+class AvaliacoesNoRelatorioTest(unittest.TestCase):
+    def test_conta_uteis_e_lista_respostas_com_erro(self):
+        dados = relatorio.montar_relatorio([
+            {"pergunta": "Quando será a Semana?", "fontes": ["A"], "avaliacao": "positiva"},
+            {"pergunta": "Quem organiza?", "fontes": ["A"], "avaliacao": "erro"},
+            {"pergunta": "quem organiza?", "fontes": ["A"], "avaliacao": "erro"},
+            {"pergunta": "Qual o orçamento?", "fontes": ["A"]},
+        ], [], "INICIO", "FIM")
+        uso = json.loads(dados["para_ia"])
+        self.assertEqual(uso["avaliadas_como_uteis"], 1)
+        self.assertEqual(uso["marcadas_com_erro"], 2)
+        self.assertEqual(dados["respostas_com_erro"], ["Quem organiza?"])
+        self.assertIn("<h3>Respostas marcadas com erro</h3><ul><li>Quem organiza?</li></ul>", dados["html_fatos"])
+        self.assertIn("1 resposta(s) avaliada(s) como útil", dados["html_fatos"])

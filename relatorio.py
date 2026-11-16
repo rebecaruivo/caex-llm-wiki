@@ -250,7 +250,20 @@ def _publicado_com_mudancas(item):
     return texto
 
 
-def html_fatos(envios, pendencias, faltando, prazos):
+def respostas_com_erro(mensagens):
+    """Perguntas cujas respostas alguém do CA marcou com erro, sem repetir."""
+    vistas, erros = set(), []
+    for mensagem in mensagens:
+        if mensagem.get("avaliacao") != "erro":
+            continue
+        texto = _texto_da_pergunta(mensagem)
+        if texto and texto.casefold() not in vistas:
+            vistas.add(texto.casefold())
+            erros.append(texto)
+    return erros
+
+
+def html_fatos(envios, pendencias, faltando, prazos, erros=(), uteis=0):
     """Seções factuais do e-mail, montadas por código e escapadas."""
     e = html.escape
     partes = [
@@ -273,6 +286,12 @@ def html_fatos(envios, pendencias, faltando, prazos):
         "<h3>Não concluídos</h3>",
         _lista([f"{e(i['titulo'])} — {e(i['motivo'])}" for i in envios["nao_concluidos"]],
                "Nenhum envio falhou."),
+        "<h2>Avaliações das respostas</h2>",
+        f"<p>{uteis} resposta(s) avaliada(s) como útil; "
+        f"{len(erros)} pergunta(s) com resposta marcada com erro.</p>",
+        "<h3>Respostas marcadas com erro</h3>",
+        _lista([e(pergunta) for pergunta in erros],
+               "Nenhuma resposta foi marcada com erro nesta semana."),
         "<h2>Pendências</h2>",
         "<h3>Pendências abertas</h3>",
         _lista([
@@ -312,7 +331,10 @@ def montar_relatorio(mensagens, envios, inicio, fim, raiz=None, hoje=None):
         "lacunas": lacunas[:LIMITE_LACUNAS],
         "lacunas_omitidas": max(0, len(lacunas) - LIMITE_LACUNAS),
         "documentos_faltando": faltando,
+        "avaliadas_como_uteis": sum(1 for m in mensagens if m.get("avaliacao") == "positiva"),
+        "marcadas_com_erro": sum(1 for m in mensagens if m.get("avaliacao") == "erro"),
     }
+    erros = respostas_com_erro(mensagens)
     return {
         "periodo": {"inicio": inicio, "fim": fim},
         **{k: v for k, v in uso.items() if k != "documentos_faltando"},
@@ -323,5 +345,6 @@ def montar_relatorio(mensagens, envios, inicio, fim, raiz=None, hoje=None):
         "prazos_da_semana": prazos,
         # Para a automação: o que a IA interpreta e o que o código já montou.
         "para_ia": json.dumps(uso, ensure_ascii=False),
-        "html_fatos": html_fatos(grupos, pendencias, faltando, prazos),
+        "respostas_com_erro": erros,
+        "html_fatos": html_fatos(grupos, pendencias, faltando, prazos, erros, uso["avaliadas_como_uteis"]),
     }

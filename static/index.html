@@ -535,7 +535,18 @@
         try { await navigator.clipboard.writeText(textoParaCopiar(a.texto)); retorno.textContent = "Copiado"; }
         catch (e) { retorno.textContent = "Não foi possível copiar."; }
       } } }));
-      if (!a.lacuna) {
+      if (m.id && !m.naoSalvo) {
+        // Avaliação guardada no histórico: a última vale e todos veem.
+        const botoes = {};
+        const opcoes = a.lacuna ? [] : [["positiva", "Útil"], ["erro", "Informar erro"]];
+        for (const [tipo, rotulo] of opcoes) {
+          const botao = el("button", { type: "button", class: "or-btn or-btn--quiet or-btn--sm", text: rotulo, "aria-pressed": String(m.avaliacao === tipo) });
+          botao.addEventListener("click", () => avaliar(tipo, m, botoes, retorno));
+          botoes[tipo] = botao;
+          acoes.appendChild(botao);
+        }
+        if (m.avaliacao) retorno.textContent = AVALIADA[m.avaliacao] || "";
+      } else if (!a.lacuna) {
         const informar = el("button", { type: "button", class: "or-btn or-btn--quiet or-btn--sm", text: "Informar erro" });
         informar.addEventListener("click", () => registrar("erro", m, informar, retorno, "Enviado. A gestão vai revisar esta resposta."));
         acoes.appendChild(informar);
@@ -563,10 +574,40 @@
         corpo.push(el("p", { text: "A wiki não indica um contato para este tema. Procure a gestão do CAEX." }));
       }
       const retorno = el("p", { class: "retorno", role: "status" });
-      const botao = el("button", { type: "button", class: "or-btn or-btn--secondary or-btn--sm", text: "Registrar como lacuna" });
-      botao.addEventListener("click", () => registrar("lacuna", m, botao, retorno, "Registrado. A gestão vai avaliar."));
+      const botao = el("button", { type: "button", class: "or-btn or-btn--secondary or-btn--sm", text: "Registrar como lacuna", "aria-pressed": String(m.avaliacao === "lacuna") });
+      if (m.id && !m.naoSalvo) {
+        botao.addEventListener("click", () => avaliar("lacuna", m, { lacuna: botao }, retorno));
+        if (m.avaliacao === "lacuna") retorno.textContent = AVALIADA.lacuna;
+      } else {
+        botao.addEventListener("click", () => registrar("lacuna", m, botao, retorno, "Registrado. A gestão vai avaliar."));
+      }
       corpo.push(el("p", {}, [botao]), retorno);
       return aviso("or-notice--lacuna", ICONES.rascunho, "A wiki não tem essa informação", corpo);
+    }
+
+    const AVALIADA = {
+      positiva: "Avaliada como útil. Obrigado!",
+      erro: "Erro informado. A gestão vai revisar esta resposta.",
+      lacuna: "Registrada como lacuna. A gestão vai avaliar.",
+    };
+
+    async function avaliar(tipo, m, botoes, retorno) {
+      const todos = Object.values(botoes);
+      todos.forEach((b) => { b.disabled = true; });
+      try {
+        const r = await pedirJson(`/api/mensagens/${encodeURIComponent(m.id)}/avaliacao`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo })
+        });
+        if (!r.ok) throw new Error(String(r.status));
+        m.avaliacao = tipo;
+        for (const [nome, b] of Object.entries(botoes)) b.setAttribute("aria-pressed", String(nome === tipo));
+        retorno.textContent = AVALIADA[tipo];
+      } catch (e) {
+        retorno.textContent = "Não foi possível registrar a avaliação agora. Tente de novo mais tarde.";
+      } finally {
+        todos.forEach((b) => { b.disabled = false; });
+      }
     }
 
     async function registrar(tipo, m, botao, retorno, sucesso) {
@@ -709,7 +750,7 @@
           pergunta, pergunta_interpretada: dados.pergunta_interpretada || null,
           resposta: dados.resposta, fontes: dados.fontes || [],
           citacoes_invalidas: dados.citacoes_invalidas || [], criado_em: new Date().toISOString(), naoSalvo: !dados.salvo,
-          do_cache: !!dados.do_cache
+          do_cache: !!dados.do_cache, id: dados.mensagem_id || null, avaliacao: null
         };
         if (!chatAtual) chatAtual = { id: dados.chat_id, titulo: pergunta, mensagens: [] };
         else if (dados.chat_id) chatAtual.id = dados.chat_id;

@@ -63,6 +63,7 @@ button { font: inherit; }
 .or-btn--secondary:hover { background: var(--surface-sunken); color: var(--ink); }
 .or-btn--quiet { background: transparent; color: var(--primary); padding: 0 var(--space-2); }
 .or-btn--quiet:hover { background: var(--primary-soft); }
+.or-btn[aria-pressed="true"] { background: var(--primary-soft); font-weight: 600; }
 .or-btn--danger { background: var(--danger); color: var(--on-primary); }
 .or-btn--danger:hover { filter: brightness(0.92); }
 .or-btn--sm { height: 28px; padding: 0 var(--space-3); }

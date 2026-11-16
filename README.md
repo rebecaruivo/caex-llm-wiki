@@ -18,6 +18,7 @@ Um oráculo para dúvidas internas de um centro acadêmico. Ele responde só com
 | Histórico compartilhado | Todo o CA vê e continua os mesmos chats, sem login. Qualquer pessoa pode apagar um chat |
 | Perguntas de continuação | "E quem organiza?" vira "Quem organiza a Semana de Integração?" antes de ser respondida |
 | Cache exato | A mesma pergunta, com a mesma wiki e o mesmo modelo, reaproveita a resposta. Wiki nova invalida o cache sozinha |
+| Avaliação das respostas | Cada resposta tem "Útil" e "Informar erro". A avaliação fica no histórico, e o resumo semanal mostra quais respostas foram marcadas com erro |
 
 ## Arquitetura
 
@@ -85,7 +86,8 @@ Ferramentas: Claude (planejamento, revisão e diagnóstico dos evals), OpenCode 
 | `/api/wiki` | GET | Páginas, fontes e o que a wiki ainda não cobre |
 | `/api/lint` | GET | Revisão automática da wiki |
 | `/api/metricas` | GET | Perguntas feitas e respostas reaproveitadas |
-| `/api/registros` | POST | Registra uma lacuna ou um erro informado |
+| `/api/mensagens/{id}/avaliacao` | POST | Avalia uma resposta: útil, erro ou lacuna. Fica no histórico; erro tira a resposta do cache |
+| `/api/registros` | POST | Registra uma lacuna ou um erro num webhook (usado quando a resposta não foi salva no histórico) |
 | `/api/enviar/config` | GET | Estado público do formulário de envio |
 | `/api/enviar` | POST | Recebe uma ata e a coloca na fila |
 | `/api/ingest/{id}` | GET | Andamento público de um envio |
