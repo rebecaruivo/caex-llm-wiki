@@ -24,6 +24,7 @@ import github_ingest
 import ingerir
 import notificacoes
 import reconciliacao
+import painel
 import relatorio
 import tempo
 from fila_ingest import ErroDispatch
@@ -105,6 +106,11 @@ def pagina_revisao():
     return FileResponse(RAIZ / "static" / "revisar.html", headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/painel", include_in_schema=False)
+def pagina_painel():
+    return FileResponse(RAIZ / "static" / "painel.html")
+
+
 @app.get("/enviar", include_in_schema=False)
 def pagina_enviar():
     """Entrega o formulário público de envio de fontes."""
@@ -138,6 +144,30 @@ def publico(problema):
     if problema["problema"].startswith("E-mail"):
         detalhe = "Endereço oculto nesta página. Veja no terminal com tools/lint_wiki.py."
     return {chave: problema[chave] for chave in ("tipo", "pagina", "problema", "acao")} | {"detalhe": detalhe}
+
+
+@app.get("/api/painel")
+def ver_painel(semanas: int = 8):
+    """Uso do oráculo por semana, para o painel público em /painel."""
+    exigir_banco()
+    semanas = min(max(semanas, 4), 12)
+    hoje = datetime.now(painel.FUSO).date()
+    inicio = painel.semanas_do_periodo(hoje, semanas)[0]
+    inicio_utc = datetime.combine(inicio, datetime.min.time(), painel.FUSO).astimezone(timezone.utc)
+    try:
+        mensagens, envios = db.dados_painel(inicio_utc.isoformat())
+    except db.ErroBanco as erro:
+        print(f"Falha ao montar o painel: {erro}", flush=True)
+        raise HTTPException(status_code=503, detail="Não foi possível montar o painel agora.") from erro
+    pendencias, faltando = relatorio.ler_pendencias(RAIZ)
+    resumo = resumo_wiki()
+    wiki = {
+        "paginas": len(resumo.get("paginas", [])),
+        "fontes": len(resumo.get("fontes", [])),
+        "pendencias": len(pendencias),
+        "documentos_faltando": faltando,
+    }
+    return painel.montar_painel(mensagens, envios, hoje, semanas, wiki)
 
 
 @app.get("/api/metricas")
