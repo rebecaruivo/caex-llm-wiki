@@ -4,9 +4,9 @@
 
 Um oráculo para dúvidas internas de um centro acadêmico. Ele responde só com o que está numa wiki revisada por pessoas, cita a fonte de cada informação e diz quando não sabe. A wiki é mantida por um agente: qualquer pessoa envia uma ata pelo site, a IA propõe as mudanças, o código confere e a gestão aprova num Pull Request.
 
-**No ar:** [caex-llm-wiki.vercel.app](https://caex-llm-wiki.vercel.app) · [enviar uma ata](https://caex-llm-wiki.vercel.app/enviar) · [revisão da wiki](https://caex-llm-wiki.vercel.app/revisar) · [documentação da API](https://caex-llm-wiki.vercel.app/docs)
+**No ar:** [caex-llm-wiki.vercel.app](https://caex-llm-wiki.vercel.app) · [painel](https://caex-llm-wiki.vercel.app/painel) · [enviar uma ata](https://caex-llm-wiki.vercel.app/enviar) · [revisão da wiki](https://caex-llm-wiki.vercel.app/revisar) · [documentação da API](https://caex-llm-wiki.vercel.app/docs)
 
-**Estado:** em produção e testado de ponta a ponta. Uma ata enviada pelo site virou um PR, foi aprovada e, minutos depois, o chat respondeu com a informação nova, citando a ata.
+**Estado:** em produção e testado de ponta a ponta. Uma ata enviada pelo site virou um PR, foi aprovada e, minutos depois, o chat respondeu com a informação nova, citando a ata. Toda segunda, uma automação no Make manda à gestão um resumo da semana com IA, e um painel público mostra o uso semana a semana.
 
 ## O que ele faz
 
@@ -19,6 +19,8 @@ Um oráculo para dúvidas internas de um centro acadêmico. Ele responde só com
 | Perguntas de continuação | "E quem organiza?" vira "Quem organiza a Semana de Integração?" antes de ser respondida |
 | Cache exato | A mesma pergunta, com a mesma wiki e o mesmo modelo, reaproveita a resposta. Wiki nova invalida o cache sozinha |
 | Avaliação das respostas | Cada resposta tem "Útil" e "Informar erro". A avaliação fica no histórico, e o resumo semanal mostra quais respostas foram marcadas com erro |
+| **Painel** | A página `/painel` mostra, semana a semana: perguntas com e sem fonte, cache, avaliações, atas publicadas e as lacunas mais perguntadas |
+| **Resumo semanal (Make)** | Toda segunda às 8h, um cenário no Make busca o relatório da semana na API, o Gemini analisa as lacunas e o Gmail envia à gestão o que cada ata mudou, o que travou, os avisos da semana e as pendências. [Como funciona](docs/automacao-make.md) |
 
 ## Arquitetura
 
@@ -34,6 +36,9 @@ Membros do CA ─────────▶ │  Perguntar        Revisar      
                                                                   │
                                                                   ▼
                               Wiki publicada ◀── merge ── Pull Request ◀── Gestão revisa
+
+Toda segunda: Make ──▶ /api/relatorio/semanal ──▶ Gemini (lacunas) ──▶ Gmail para a gestão
+A qualquer hora: /painel ──▶ /api/painel (histórico agregado por semana)
 ```
 
 A wiki segue o padrão **LLM Wiki**: em vez de buscar trechos soltos a cada pergunta (RAG), um agente compila as fontes em páginas Markdown, com citação em cada linha, lacunas e contradições explícitas. Atas se substituem e se contradizem; um trecho solto não diz qual vale, uma página compilada diz.
@@ -61,6 +66,8 @@ A primeira rodada do ingest com o modelo real deu 8 de 14. O caminho até 14 de 
 - **Quando um eval reprova, pergunte quem errou.** Nas rodadas do ingest erraram o modelo, o código (uma regra de segurança que nunca disparava) e o próprio eval (um juiz sem evidência). Corrigir o modelo quando o erro é do eval piora o sistema.
 - **O que só pode ter um valor, o código preenche.** A fonte que substitui uma linha é sempre a ata em compilação; pedir isso ao modelo só criava mais uma chance de erro.
 - **Eval e revisão humana se completam.** Com 14 de 14 no eval, a primeira ata real ainda revelou uma lacuna que nenhum caso cobria. O que a revisão acha vira caso novo.
+- **O código monta os fatos, a IA interpreta.** No resumo semanal, listas de atas, motivos, datas e contagens saem prontas da API; o Gemini só agrupa as lacunas por tema e sugere ações. Um modelo pode esquecer um item ou trocar uma data; o código não.
+- **A citação torna cada mudança rastreável.** Toda linha gravada pelo ingest cita a ata de origem, então "o que esta ata mudou" é só procurar a citação na wiki.
 - **Cache exato, não semântico.** "Quando será a Semana?" e "Quando foi aprovada a Semana?" parecem iguais para uma busca por significado, mas pedem respostas diferentes.
 - **Dados pessoais e segurança.** O navegador nunca fala com o banco; só a API tem a chave secreta, e as tabelas têm RLS sem políticas públicas. Texto do modelo entra na página sempre como texto, nunca como HTML. Erros que vão para o log público do Actions são limpos de nomes e PII.
 
@@ -86,6 +93,7 @@ Ferramentas: Claude (planejamento, revisão e diagnóstico dos evals), OpenCode 
 | `/api/wiki` | GET | Páginas, fontes e o que a wiki ainda não cobre |
 | `/api/lint` | GET | Revisão automática da wiki |
 | `/api/metricas` | GET | Perguntas feitas e respostas reaproveitadas |
+| `/api/painel` | GET | Uso por semana (4 a 12 semanas), lacunas frequentes, respostas com erro, envios e estado da wiki |
 | `/api/mensagens/{id}/avaliacao` | POST | Avalia uma resposta: útil, erro ou lacuna. Fica no histórico; erro tira a resposta do cache |
 | `/api/registros` | POST | Registra uma lacuna ou um erro num webhook (usado quando a resposta não foi salva no histórico) |
 | `/api/enviar/config` | GET | Estado público do formulário de envio |
@@ -111,16 +119,17 @@ curl -X POST https://caex-llm-wiki.vercel.app/api/perguntar \
 | `tools/ingerir.py` | Worker que roda no GitHub Actions para um envio |
 | `fila_ingest.py` | Fila com trava e disparo do worker |
 | `db.py` | Acesso ao Supabase pela API REST, sem dependências |
+| `relatorio.py`, `painel.py` | Relatório semanal (para o Make) e painel: contagens por código, testadas sem banco |
 | `prompts/` | Prompts do oráculo, da reescrita, do classificador e do compilador |
 | `wiki/`, `sources/` | Conhecimento compilado e fontes |
 | `evals/`, `tools/run_evals*.py` | Casos de avaliação, avaliadores e resultados |
 | `tests/` | Suíte determinística, sem rede |
 | `.github/workflows/` | Worker, fechamento do PR e CI |
-| `docs/` | [Especificação](docs/especificacao-ingest.md), [referência técnica](docs/referencia-ingest.md) e [operação](docs/operacao-ingest.md) do ingest |
+| `docs/` | [Especificação](docs/especificacao-ingest.md), [referência técnica](docs/referencia-ingest.md) e [operação](docs/operacao-ingest.md) do ingest; [automação no Make](docs/automacao-make.md) |
 
 ## Como rodar localmente
 
-1. Crie um projeto no Supabase e rode `supabase/schema.sql` e `supabase/ingest.sql` no SQL Editor.
+1. Crie um projeto no Supabase e rode `supabase/schema.sql`, `supabase/ingest.sql` e `supabase/avaliacoes.sql` no SQL Editor.
 2. Copie `.env.example` para `.env` e preencha a chave do Gemini, a URL e a chave secreta do Supabase.
 3. Instale e rode:
 
@@ -147,5 +156,4 @@ O eval do ingest respeita o plano gratuito do Gemini: espaça as chamadas e, se 
 
 1. **Fechar lacunas pelo ingest:** a operação `resolver_lacuna` (Issue #13) e os casos I15 e I16, vindos da revisão da primeira ata real.
 2. **Eval em várias rodadas:** medir a taxa de aprovação do ingest, porque o mesmo caso pode variar entre rodadas com o modelo leve.
-3. **Automação com n8n:** consumir o webhook de notificações do ingest para avisar a gestão e mandar um resumo semanal das lacunas mais perguntadas.
-4. **Dashboard** de perguntas, lacunas, reaproveitamento do cache e resultados de eval.
+3. **Avisos na hora (segundo cenário do Make):** receber o webhook de notificações do ingest e avisar a gestão quando um PR abre ou um envio falha.

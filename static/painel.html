@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel · Oráculo do CAEX</title>
+  <meta name="description" content="Uso do Oráculo do CAEX por semana: perguntas, respostas com fonte, lacunas, avaliações e atas publicadas. Dados fictícios.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+  <script>
+    (function () {
+      let salvo = null;
+      try { salvo = localStorage.getItem("oraculo-tema"); } catch (e) { /* sem armazenamento */ }
+      const escuro = salvo ? salvo === "escuro" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = escuro ? "dark" : "light";
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/oraculo.css">
+  <style>
+    /* Cores de série validadas (dataviz): verde e âmbar do DS, ajustados para preencher marcas. */
+    :root, [data-theme="light"] { --serie-com-fonte: #278d68; --serie-sem-fonte: #b37a1f; --grade: #e4e0d5; }
+    [data-theme="dark"] { --serie-com-fonte: #34a079; --serie-sem-fonte: #b98022; --grade: #2a2e29; }
+
+    .painel { flex: 999 1 640px; min-width: 0; max-width: 960px; }
+    .painel .inicio { padding-top: 24px; }
+    .filtros { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 24px; align-items: center; }
+    .filtros .rotulo { margin-right: 8px; font-size: 13px; color: var(--ink-muted); }
+    .filtro { height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: transparent; color: var(--ink); font: 400 13px/16px var(--font-sans); cursor: pointer; }
+    .filtro:hover { background: var(--surface-sunken); }
+    .filtro[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); font-weight: 500; }
+
+    .kpis { margin: 24px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: var(--line); box-shadow: inset 0 0 0 999px var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+    .kpi { background: var(--surface-raised); padding: 16px; min-width: 0; }
+    .kpi dt { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+    .kpi dd { margin: 6px 0 0; font: 600 30px/36px var(--font-sans); color: var(--ink); }
+    .kpi .sub { display: block; margin-top: 2px; font: 400 13px/18px var(--font-sans); color: var(--ink-muted); }
+
+    .cartao { margin-top: 24px; padding: 20px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); }
+    .cartao h2 { margin: 0; font: 600 18px/26px var(--font-serif); }
+    .cartao .nota { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-muted); }
+    .grade-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+    .grade-2 .cartao { margin-top: 24px; }
+
+    .legenda { display: flex; gap: 20px; flex-wrap: wrap; margin: 16px 0 8px; font-size: 13px; color: var(--ink-muted); list-style: none; padding: 0; }
+    .legenda li { display: inline-flex; align-items: center; gap: 8px; }
+    .amostra { width: 12px; height: 12px; border-radius: 2px; flex: none; }
+    .grafico { position: relative; }
+    .grafico svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .grafico .alvo:focus { outline: none; }
+    .grafico .alvo:focus-visible rect.fundo, .grafico .alvo:hover rect.fundo { fill: var(--surface-sunken); }
+    .dica { position: absolute; pointer-events: none; min-width: 160px; padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-md); box-shadow: var(--shadow-overlay); font-size: 13px; line-height: 20px; color: var(--ink); z-index: 2; }
+    .dica[hidden] { display: none; }
+    .dica .titulo { color: var(--ink-muted); margin-bottom: 4px; }
+    .dica .linha { display: flex; align-items: center; gap: 8px; }
+    .dica .linha b { font-weight: 600; min-width: 2ch; text-align: right; }
+    .dica .chave { width: 12px; height: 2px; border-radius: 1px; }
+
+    details.tabela { margin-top: 16px; font-size: 13px; }
+    details.tabela summary { cursor: pointer; color: var(--primary); }
+    .caixa-tabela { overflow-x: auto; margin-top: 12px; }
+    table.dados { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    table.dados th, table.dados td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+    table.dados th:first-child, table.dados td:first-child { text-align: left; }
+    table.dados th { font: 600 11px/16px var(--font-sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted); }
+
+    .medidores { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+    .medidor { display: grid; grid-template-columns: minmax(0, 1fr) 120px 2.5ch; gap: 12px; align-items: center; font-size: 14px; line-height: 20px; }
+    .medidor .nome { overflow-wrap: anywhere; }
+    .medidor .trilho { height: 8px; border-radius: 4px; background: var(--surface-sunken); overflow: hidden; }
+    .medidor .barra { height: 100%; border-radius: 4px; background: var(--serie-sem-fonte); }
+    #erros .medidor .barra { background: var(--ink-faint); }
+    .medidor .valor { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+    @media (max-width: 520px) { .medidor { grid-template-columns: minmax(0, 1fr) 2.5ch; } .medidor .trilho { grid-column: 1 / -1; grid-row: 2; } }
+
+    .lista-simples { margin: 16px 0 0; padding-left: 20px; font-size: 14px; line-height: 22px; }
+    .estado-wiki { margin: 16px 0 0; display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; font-size: 14px; }
+    .estado-wiki dt { color: var(--ink-muted); }
+    .estado-wiki dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .vazio { margin: 16px 0 0; padding: 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); font-size: 14px; line-height: 22px; color: var(--ink-muted); }
+    .aviso-erro { margin-top: 24px; }
+    [aria-busy="true"] .painel-conteudo { opacity: 0.55; transition: opacity 120ms; }
+    @media (max-width: 640px) { .filtro { min-height: 44px; } }
+  </style>
+</head>
+<body>
+  <header class="topo">
+    <div class="topo-dentro">
+      <a class="marca" href="/">
+        <span class="marca-nome">Oráculo</span>
+        <span class="marca-sigla">CAEX</span>
+      </a>
+      <nav class="nav-topo" aria-label="Principal">
+        <a href="/">Perguntar</a>
+        <a href="/painel" aria-current="page">Painel</a>
+        <a href="/revisar">Revisar wiki</a>
+        <a href="/enviar">Adicionar fonte</a>
+      </nav>
+      <div class="topo-acoes">
+        <button class="or-btn or-btn--secondary or-btn--sm" type="button" id="botao-tema">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path d="M8 2.75a5.25 5.25 0 010 10.5z" fill="currentColor" stroke="none"></path></svg>
+          <span id="rotulo-tema">Tema escuro</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="corpo">
+    <main class="painel" id="painel" aria-busy="true">
+      <section class="inicio">
+        <p class="rotulo-secao">Painel · uso do oráculo</p>
+        <h1>Como o CA está usando o oráculo</h1>
+        <p class="lead">Perguntas, respostas com fonte, lacunas, avaliações e atas publicadas, semana a semana. Os números vêm do histórico compartilhado.</p>
+      </section>
+
+      <div class="filtros" role="group" aria-label="Período">
+        <span class="rotulo">Período</span>
+        <button class="filtro" type="button" data-semanas="4" aria-pressed="false">4 semanas</button>
+        <button class="filtro" type="button" data-semanas="8" aria-pressed="true">8 semanas</button>
+        <button class="filtro" type="button" data-semanas="12" aria-pressed="false">12 semanas</button>
+      </div>
+
+      <div id="erro" class="aviso-erro" role="alert" hidden></div>
+
+      <div class="painel-conteudo">
+        <dl class="kpis" id="kpis"></dl>
+
+        <section class="cartao" aria-labelledby="titulo-semanas">
+          <h2 id="titulo-semanas">Perguntas por semana</h2>
+          <p class="nota" id="nota-semanas">Cada coluna é uma semana, de segunda a domingo. Sem fonte significa que a wiki não tinha a informação.</p>
+          <ul class="legenda" aria-hidden="true">
+            <li><span class="amostra" style="background: var(--serie-com-fonte)"></span>Respondidas com fonte</li>
+            <li><span class="amostra" style="background: var(--serie-sem-fonte)"></span>Sem fonte (lacuna)</li>
+          </ul>
+          <div class="grafico" id="grafico"></div>
+          <details class="tabela">
+            <summary>Ver os números em tabela</summary>
+            <div class="caixa-tabela"><table class="dados" id="tabela-semanas"></table></div>
+          </details>
+        </section>
+
+        <div class="grade-2">
+          <section class="cartao" aria-labelledby="titulo-lacunas">
+            <h2 id="titulo-lacunas">O que a wiki ainda não sabe</h2>
+            <p class="nota">Perguntas sem fonte mais repetidas no período.</p>
+            <div id="lacunas"></div>
+          </section>
+          <section class="cartao" aria-labelledby="titulo-erros">
+            <h2 id="titulo-erros">Respostas marcadas com erro</h2>
+            <p class="nota">Perguntas em que alguém do CA clicou em "Informar erro".</p>
+            <div id="erros"></div>
+          </section>
+        </div>
+
+        <div class="grade-2">
+          <section class="cartao" aria-labelledby="titulo-envios">
+            <h2 id="titulo-envios">Atas enviadas no período</h2>
+            <p class="nota">Resultado de cada envio feito pelo site.</p>
+            <div id="envios"></div>
+          </section>
+          <section class="cartao" aria-labelledby="titulo-wiki">
+            <h2 id="titulo-wiki">A wiki agora</h2>
+            <p class="nota">Estado atual da base de conhecimento.</p>
+            <div id="wiki"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+    const NS = "http://www.w3.org/2000/svg";
+    const STATUS = {
+      publicado: "Publicadas", aguardando_revisao: "Aguardando revisão", sem_mudancas: "Sem mudanças",
+      fechado_sem_merge: "Fechadas sem aprovação", falhou: "Falharam", quarentena: "Em quarentena",
+      expirado: "Expiraram", na_fila: "Na fila", processando: "Processando"
+    };
+    let semanas = 8;
+
+    function el(tag, props, filhos) {
+      const node = document.createElement(tag);
+      for (const [chave, valor] of Object.entries(props || {})) {
+        if (valor == null || valor === false) continue;
+        if (chave === "text") node.textContent = String(valor);
+        else if (chave === "class") node.className = valor;
+        else node.setAttribute(chave, String(valor));
+      }
+      for (const filho of filhos || []) if (filho) node.appendChild(typeof filho === "string" ? document.createTextNode(filho) : filho);
+      return node;
+    }
+    function svg(tag, attrs, filhos) {
+      const node = document.createElementNS(NS, tag);
+      for (const [chave, valor] of Object.entries(attrs || {})) node.setAttribute(chave, String(valor));
+      for (const filho of filhos || []) if (filho) node.appendChild(filho);
+      return node;
+    }
+    function limpar(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+    const numero = (n) => (n == null ? "—" : Number(n).toLocaleString("pt-BR"));
+    const diaMes = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+    function fimDaSemana(iso) {
+      const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + 6);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function kpi(rotulo, valor, sub) {
+      return el("div", { class: "kpi" }, [el("dt", { text: rotulo }), el("dd", {}, [String(valor), sub ? el("span", { class: "sub", text: sub }) : null])]);
+    }
+    function desenharKpis(t) {
+      const dl = document.getElementById("kpis"); limpar(dl);
+      dl.append(
+        kpi("Perguntas", numero(t.perguntas), `em ${semanas} semanas`),
+        kpi("Respondidas com fonte", t.pct_com_fonte == null ? "—" : `${t.pct_com_fonte}%`, `${numero(t.com_fonte)} de ${numero(t.perguntas)}`),
+        kpi("Reaproveitadas do cache", t.pct_do_cache == null ? "—" : `${t.pct_do_cache}%`, "sem chamar o modelo"),
+        kpi("Avaliações", `${numero(t.uteis)} úteis`, `${numero(t.erros)} com erro`),
+        kpi("Atas publicadas", numero(t.publicadas), `de ${numero(t.envios)} enviadas`)
+      );
+    }
+
+    function escala(max) {
+      if (max <= 0) return { topo: 4, passo: 1 };
+      const bruto = max / 4, mag = Math.pow(10, Math.floor(Math.log10(bruto)));
+      const passo = [1, 2, 5, 10].map((m) => m * mag).find((p) => p >= bruto);
+      return { topo: Math.ceil(max / passo) * passo, passo };
+    }
+
+    // Colunas empilhadas: com fonte embaixo, sem fonte em cima; 2px de superfície entre os dois.
+    function desenharGrafico(serie) {
+      const caixa = document.getElementById("grafico"); limpar(caixa);
+      // Desenha na largura real do cartão: o texto fica sempre em 11px, também no celular.
+      const L = Math.max(300, Math.round(caixa.clientWidth || 720)), A = L < 520 ? 220 : 260;
+      const m = { esq: 32, dir: 8, topo: 20, base: 28 };
+      const larg = L - m.esq - m.dir, alt = A - m.topo - m.base;
+      const max = Math.max(0, ...serie.map((s) => s.perguntas));
+      const { topo, passo } = escala(max);
+      const y = (v) => m.topo + alt - (v / topo) * alt;
+      const faixa = larg / serie.length, barra = Math.min(24, faixa * 0.55);
+      const rotular = (i) => faixa >= 44 || i % 2 === serie.length % 2 || i === serie.length - 1;
+      const raiz = svg("svg", { viewBox: `0 0 ${L} ${A}`, role: "img", "aria-label": "Perguntas por semana, com e sem fonte. Os números estão na tabela abaixo." });
+      for (let v = 0; v <= topo; v += passo) {
+        raiz.appendChild(svg("line", { x1: m.esq, x2: L - m.dir, y1: y(v), y2: y(v), stroke: "var(--grade)", "stroke-width": 1 }));
+        const t = svg("text", { x: m.esq - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-faint)" });
+        t.textContent = numero(v); raiz.appendChild(t);
+      }
+      const dica = el("div", { class: "dica", hidden: true, role: "status" });
+      serie.forEach((s, i) => {
+        const cx = m.esq + faixa * i + faixa / 2, x = cx - barra / 2;
+        const grupo = svg("g", { class: "alvo", tabindex: 0, "aria-label": `Semana de ${diaMes(s.inicio)}: ${s.perguntas} perguntas, ${s.com_fonte} com fonte, ${s.sem_fonte} sem fonte` });
+        grupo.appendChild(svg("rect", { class: "fundo", x: m.esq + faixa * i + 2, y: m.topo, width: faixa - 4, height: alt, fill: "transparent", rx: 4 }));
+        const baseY = y(0), hCom = baseY - y(s.com_fonte), hSem = baseY - y(s.sem_fonte);
+        const vao = s.com_fonte && s.sem_fonte ? 2 : 0;
+        if (s.com_fonte) {
+          const arredonda = !s.sem_fonte;
+          grupo.appendChild(svg("path", { d: coluna(x, baseY - hCom, barra, hCom, arredonda), fill: "var(--serie-com-fonte)" }));
+        }
+        if (s.sem_fonte) {
+          const yTopo = baseY - hCom - vao - Math.max(0, hSem - vao);
+          grupo.appendChild(svg("path", { d: coluna(x, yTopo, barra, Math.max(1, hSem - vao), true), fill: "var(--serie-sem-fonte)" }));
+        }
+        if (rotular(i)) {
+          const rotulo = svg("text", { x: cx, y: A - 8, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-muted)" });
+          rotulo.textContent = diaMes(s.inicio); grupo.appendChild(rotulo);
+        }
+        if (i === serie.length - 1 && s.perguntas) {
+          const total = svg("text", { x: cx, y: y(s.perguntas) - 6, "text-anchor": "middle", "font-size": 12, "font-weight": 600, fill: "var(--ink)" });
+          total.textContent = numero(s.perguntas); grupo.appendChild(total);
+        }
+        const mostrar = () => {
+          limpar(dica);
+          dica.append(el("div", { class: "titulo", text: `${diaMes(s.inicio)} a ${diaMes(fimDaSemana(s.inicio))}` }),
+            linhaDica(s.perguntas, "perguntas", null),
+            linhaDica(s.com_fonte, "com fonte", "var(--serie-com-fonte)"),
+            linhaDica(s.sem_fonte, "sem fonte", "var(--serie-sem-fonte)"));
+          dica.hidden = false;
+          // Ao lado da coluna (direita, ou esquerda perto da borda), alinhada ao topo do gráfico.
+          const larguraDica = 170;
+          const direita = cx + barra / 2 + 12;
+          const esquerda = direita + larguraDica <= L ? direita : Math.max(0, cx - barra / 2 - 12 - larguraDica);
+          dica.style.left = `${esquerda}px`; dica.style.top = `${m.topo}px`;
+        };
+        grupo.addEventListener("pointerenter", mostrar); grupo.addEventListener("focus", mostrar);
+        grupo.addEventListener("pointerleave", () => { dica.hidden = true; }); grupo.addEventListener("blur", () => { dica.hidden = true; });
+        raiz.appendChild(grupo);
+      });
+      raiz.appendChild(svg("line", { x1: m.esq, x2: L - m.dir, y1: y(0), y2: y(0), stroke: "var(--line-strong)", "stroke-width": 1 }));
+      caixa.append(raiz, dica);
+    }
+    // Coluna com o topo arredondado (4px) e a base reta, crescendo da linha de base.
+    function coluna(x, yTopo, w, h, arredonda) {
+      const r = arredonda ? Math.min(4, h, w / 2) : 0;
+      return `M${x},${yTopo + h}V${yTopo + r}Q${x},${yTopo} ${x + r},${yTopo}H${x + w - r}Q${x + w},${yTopo} ${x + w},${yTopo + r}V${yTopo + h}Z`;
+    }
+    function linhaDica(valor, rotulo, cor) {
+      return el("div", { class: "linha" }, [
+        cor ? el("span", { class: "chave", style: `background:${cor}` }) : el("span", { class: "chave" }),
+        el("b", { text: numero(valor) }), el("span", { text: rotulo })
+      ]);
+    }
+
+    function desenharTabela(serie) {
+      const tabela = document.getElementById("tabela-semanas"); limpar(tabela);
+      const cab = ["Semana", "Perguntas", "Com fonte", "Sem fonte", "Do cache", "Úteis", "Com erro", "Atas publicadas"];
+      tabela.appendChild(el("thead", {}, [el("tr", {}, cab.map((c) => el("th", { scope: "col", text: c })))]));
+      const corpo = el("tbody");
+      for (const s of serie) {
+        corpo.appendChild(el("tr", {}, [`${diaMes(s.inicio)} a ${diaMes(fimDaSemana(s.inicio))}`, s.perguntas, s.com_fonte, s.sem_fonte, s.do_cache, s.uteis, s.erros, s.publicadas]
+          .map((v, i) => el(i === 0 ? "th" : "td", i === 0 ? { scope: "row", text: v } : { text: numero(v) }))));
+      }
+      tabela.appendChild(corpo);
+    }
+
+    function desenharMedidores(id, itens, vazio) {
+      const caixa = document.getElementById(id); limpar(caixa);
+      if (!itens.length) { caixa.appendChild(el("p", { class: "vazio", text: vazio })); return; }
+      const max = Math.max(...itens.map((i) => i.vezes));
+      const ul = el("ul", { class: "medidores" });
+      for (const item of itens) {
+        const trilho = el("div", { class: "trilho", "aria-hidden": "true" }, [el("div", { class: "barra", style: `width:${(100 * item.vezes / max).toFixed(1)}%` })]);
+        ul.appendChild(el("li", { class: "medidor" }, [el("span", { class: "nome", text: item.pergunta }), trilho,
+          el("span", { class: "valor", text: String(item.vezes), "aria-label": `${item.vezes} vez(es)` })]));
+      }
+      caixa.appendChild(ul);
+    }
+
+    function desenharEnvios(porStatus) {
+      const caixa = document.getElementById("envios"); limpar(caixa);
+      const itens = Object.entries(porStatus).sort((a, b) => b[1] - a[1]);
+      if (!itens.length) { caixa.appendChild(el("p", { class: "vazio", text: "Nenhuma ata enviada no período." })); return; }
+      const dl = el("dl", { class: "estado-wiki" });
+      for (const [status, n] of itens) dl.append(el("dt", { text: STATUS[status] || status }), el("dd", { text: numero(n) }));
+      caixa.appendChild(dl);
+    }
+
+    function desenharWiki(w) {
+      const caixa = document.getElementById("wiki"); limpar(caixa);
+      const dl = el("dl", { class: "estado-wiki" });
+      dl.append(el("dt", { text: "Páginas" }), el("dd", { text: numero(w.paginas) }),
+        el("dt", { text: "Fontes registradas" }), el("dd", { text: numero(w.fontes) }),
+        el("dt", { text: "Pendências abertas" }), el("dd", { text: numero(w.pendencias) }));
+      caixa.appendChild(dl);
+      if ((w.documentos_faltando || []).length) {
+        caixa.appendChild(el("p", { class: "nota", style: "margin-top:16px", text: "Documentos que a gestão já sabe que faltam:" }));
+        caixa.appendChild(el("ul", { class: "lista-simples" }, w.documentos_faltando.map((d) => el("li", { text: d }))));
+      }
+    }
+
+    async function carregar() {
+      const main = document.getElementById("painel"), erro = document.getElementById("erro");
+      main.setAttribute("aria-busy", "true");
+      try {
+        const r = await fetch(`/api/painel?semanas=${semanas}`, { headers: { Accept: "application/json" } });
+        if (!r.ok) throw new Error(String(r.status));
+        const d = await r.json();
+        erro.hidden = true;
+        desenharKpis(d.totais);
+        ultimaSerie = d.semanas;
+        desenharGrafico(d.semanas);
+        desenharTabela(d.semanas);
+        desenharMedidores("lacunas", d.lacunas_frequentes || [], "Nenhuma pergunta ficou sem fonte no período.");
+        desenharMedidores("erros", d.respostas_com_erro || [], "Nenhuma resposta foi marcada com erro no período.");
+        desenharEnvios(d.envios_por_status || {});
+        desenharWiki(d.wiki || {});
+      } catch (e) {
+        limpar(erro);
+        erro.appendChild(el("p", { class: "vazio", text: "Não foi possível carregar o painel agora. Tente de novo em alguns minutos." }));
+        erro.hidden = false;
+      } finally {
+        main.setAttribute("aria-busy", "false");
+      }
+    }
+
+    for (const botao of document.querySelectorAll(".filtro")) {
+      botao.addEventListener("click", () => {
+        semanas = Number(botao.dataset.semanas);
+        for (const b of document.querySelectorAll(".filtro")) b.setAttribute("aria-pressed", String(b === botao));
+        carregar();
+      });
+    }
+
+    function rotuloTema() {
+      const escuro = document.documentElement.dataset.theme === "dark";
+      document.getElementById("rotulo-tema").textContent = escuro ? "Tema claro" : "Tema escuro";
+    }
+    document.getElementById("botao-tema").addEventListener("click", () => {
+      const escuro = document.documentElement.dataset.theme !== "dark";
+      document.documentElement.dataset.theme = escuro ? "dark" : "light";
+      try { localStorage.setItem("oraculo-tema", escuro ? "escuro" : "claro"); } catch (e) { /* sem armazenamento */ }
+      rotuloTema();
+    });
+    let ultimaSerie = null, espera = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(espera);
+      espera = setTimeout(() => { if (ultimaSerie) desenharGrafico(ultimaSerie); }, 150);
+    });
+    rotuloTema();
+    carregar();
+  </script>
+</body>
+</html>

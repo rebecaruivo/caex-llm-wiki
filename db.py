@@ -338,6 +338,22 @@ def dados_do_periodo(inicio_iso):
     return mensagens or [], envios
 
 
+def dados_painel(inicio_iso):
+    """Mensagens e envios desde `inicio_iso`, só com os campos que o painel usa."""
+    mensagens = _pedir("GET", "mensagens", {
+        "select": "pergunta,pergunta_interpretada,fontes,do_cache,avaliacao,criado_em",
+        "criado_em": f"gte.{inicio_iso}",
+        "order": "criado_em.asc",
+        "limit": "5000",
+    })
+    envios = _pedir("GET", "ingest_jobs", {
+        "select": "status,criado_em",
+        "criado_em": f"gte.{inicio_iso}",
+        "limit": "2000",
+    })
+    return mensagens or [], envios or []
+
+
 def metricas():
     """Quantas perguntas foram feitas e quantas vieram do cache."""
     total = _pedir("GET", "mensagens", {"select": "id"}, contar=True)
