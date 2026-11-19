@@ -13,3 +13,8 @@
 
 - Operações aplicadas: 1.
 - Páginas novas: 1.
+
+## 2026-05-27: ingestão de ATA-2026-05-27-6AD8D1
+
+- Operações aplicadas: 2.
+- Páginas novas: 2.

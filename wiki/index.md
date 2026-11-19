@@ -5,10 +5,12 @@ Todos os dados são fictícios.
 ## Processos
 - [Assembleia](processos/assembleia.md): prática observada e lacunas de regra.
 - [Grupos de trabalho](processos/grupos-de-trabalho.md): como criar e encerrar um GT.
+- [Reforma da Moradia](processos/reforma-da-moradia.md)
 
 ## Decisões
 - [Semana de Integração](decisoes/semana-de-integracao.md): data atual, histórico e orçamento.
 - [Horário de funcionamento da sala do CA](decisoes/horario-de-funcionamento-da-sala.md)
+- [Política de Permanência](decisoes/politica-de-permanencia.md)
 
 ## Referência
 - [Glossário](glossario.md)
