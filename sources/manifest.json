@@ -1,5 +1,5 @@
 {
-  "atualizado_em": "2026-11-15",
+  "atualizado_em": "2026-11-19",
   "aviso": "Todas as fontes são fictícias.",
   "fontes": [
     {
@@ -79,6 +79,18 @@
       "origem": "envio",
       "submetido_em": "2026-11-15T20:46:18.323465+00:00",
       "hash": "59d82859037bd2329aff7d39473d8f3dddfc151a2bc930c9ada17e31288ae46d"
+    },
+    {
+      "id": "ATA-2026-05-27-6AD8D1",
+      "titulo": "Ata GD Permanencia",
+      "tipo": "ata",
+      "autoridade": "ca-deliberativa",
+      "data": "2026-05-27",
+      "arquivo": "sources/atas/ATA-2026-05-27-6AD8D1.md",
+      "uso": "wiki",
+      "origem": "envio",
+      "submetido_em": "2026-11-19T23:12:58.917533+00:00",
+      "hash": "6ad8d15e6d898eaac70d4a113598b550de1cb6a66d68463ca7a291efcaccecc8"
     }
   ]
 }
